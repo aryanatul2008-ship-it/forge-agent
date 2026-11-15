@@ -38,3 +38,4 @@ export class ProposedContentProvider implements vscode.TextDocumentContentProvid
     return result.newContent;
   }
 }
+

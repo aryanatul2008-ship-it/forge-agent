@@ -238,3 +238,4 @@ export function applyPartialHunks(
     rejectedCount: rejected.length,
   };
 }
+

@@ -192,16 +192,17 @@ export async function executeEditorTool(
       }
 
       case 'propose_edit': {
-        const filePath = args?.file || args?.path || args?.file_path;
+        const realArgs = args?.input || args;
+        const filePath = realArgs?.file || realArgs?.path || realArgs?.file_path;
         if (!filePath) {
           return {
             content: [{ type: 'text', text: 'Error: "file" or "path" argument is required for propose_edit' }],
             isError: true,
           };
         }
-        const explanation = args?.explanation || args?.description || 'Proposed code changes';
-        const newContent = args?.new_content || args?.newContent || args?.content;
-        const hunks = args?.edits || args?.hunks;
+        const explanation = realArgs?.explanation || realArgs?.description || 'Proposed code changes';
+        const newContent = realArgs?.new_content || realArgs?.newContent || realArgs?.content;
+        const hunks = realArgs?.edits || realArgs?.hunks;
 
         let staged = reviewEngine.getStagedEdit(toolCallId);
         if (!staged) {

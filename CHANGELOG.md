@@ -58,4 +58,15 @@ All notable changes to this project will be documented in this file.
   - `src/review/virtualDocProvider.ts`: `forge-proposed:` TextDocumentContentProvider enabling native side-by-side diff review via `vscode.diff`.
   - Enhanced Webview UI (`src/webview/agentPanel.ts`) with interactive Diff Review Cards featuring per-hunk Accept/Reject toggles, Accept All, Reject All, Open Diff View, and approval submission driven by TrueForge tool gating.
   - Unit test suite (`scripts/test-review.ts`, `npm test`): Verified single/multiple hunks, insertions, deletions, identical text, partial apply combinations, multi-file staging, repeated edits, stale conflict detection, and undo stack.
+- Implemented Inline Edit feature in `src/editor/inlineEdit.ts`:
+  - Contributed `Ctrl+K` (Windows/Linux) / `Cmd+K` (macOS) keybinding for `forgeAgent.inlineEdit` when `editorTextFocus`.
+  - Captures selected text, line ranges, and surrounding context, presenting a focused input prompt for instructions.
+  - Streams token deltas and tool execution progress in the VS Code status bar with immediate `Esc` / click cancellation.
+  - Side-by-side in-editor diff view (`vscode.diff`) with quick-action review options (Accept All, Reject All, Individual Hunk Review) driven by TrueForge tool approvals.
+- Executed and verified Task A on Flask repository (`scripts/test-task-a.ts`, `npm run test:task-a`):
+  - Performed inline edit on `src/flask/helpers.py` (`get_debug_flag`) with instruction: "Treat the values 'off' and 'n' as false as well, case-insensitively, and update the docstring to list every value that is treated as false."
+  - Agent called `propose_edit` with updated condition and docstring.
+  - Verified with Python runtime: `FLASK_DEBUG=off` returned `False`, `FLASK_DEBUG=n` returned `False`, `FLASK_DEBUG=1` returned `True`.
+  - Ran Flask test suite: all 5 pytest tests in `tests/test_helpers.py -k test_get_debug_flag` passed cleanly.
+  - Verified clean revert via `"TF Agent: Undo Last Applied Change"`, restoring working tree to clean state.
 

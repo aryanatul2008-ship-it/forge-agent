@@ -112,19 +112,41 @@ export class DiffReviewEngine {
 
     let hunks: DiffHunk[] = [];
 
-    if (options.newContent !== undefined) {
+    if (options.newContent !== undefined && typeof options.newContent === 'string' && options.newContent.trim().length > 0) {
       hunks = computeHunks(baseContent, options.newContent);
     } else if (options.hunks && options.hunks.length > 0) {
-      hunks = options.hunks.map((h, idx) => ({
-        id: `hunk-${idx + 1}`,
-        oldStart: h.oldStart ?? h.old_start ?? 1,
-        oldLines: h.oldLines ?? h.old_lines ?? 0,
-        newStart: h.newStart ?? h.new_start ?? 1,
-        newLines: h.newLines ?? h.new_lines ?? 0,
-        oldText: h.oldText ?? h.old_text ?? '',
-        newText: h.newText ?? h.new_text ?? '',
-        status: 'pending',
-      }));
+      const baseLines = baseContent.length === 0 ? [] : baseContent.split(/\r?\n/);
+      hunks = options.hunks.map((h: any, idx: number) => {
+        const oldStart = Number(h.oldStart ?? h.old_start ?? h.start_line ?? h.startLine ?? h.line ?? 1);
+        let oldLines = h.oldLines ?? h.old_lines;
+        if (oldLines === undefined && (h.end_line !== undefined || h.endLine !== undefined)) {
+          const end = Number(h.end_line ?? h.endLine);
+          oldLines = Math.max(0, end - oldStart + 1);
+        } else if (oldLines === undefined) {
+          oldLines = 0;
+        }
+
+        const newText = String(
+          h.newText ?? h.new_text ?? h.new_content ?? h.newContent ?? h.replacement ?? h.content ?? ''
+        );
+        let oldText = h.oldText ?? h.old_text ?? h.original_text ?? '';
+        if (!oldText && oldLines > 0 && baseLines.length > 0) {
+          oldText = baseLines.slice(oldStart - 1, oldStart - 1 + oldLines).join('\n');
+        }
+
+        const newLines = newText.length === 0 ? 0 : newText.split(/\r?\n/).length;
+
+        return {
+          id: `hunk-${idx + 1}`,
+          oldStart,
+          oldLines: Number(oldLines),
+          newStart: Number(h.newStart ?? h.new_start ?? oldStart),
+          newLines,
+          oldText,
+          newText,
+          status: 'pending',
+        };
+      });
     } else {
       hunks = [];
     }

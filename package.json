@@ -43,6 +43,24 @@
         "command": "tfAgent.undoLastChange",
         "title": "TF Agent: Undo Last Applied Change",
         "category": "TF Agent"
+      },
+      {
+        "command": "forgeAgent.inlineEdit",
+        "title": "TF Agent: Inline Edit",
+        "category": "TF Agent"
+      },
+      {
+        "command": "tfAgent.inlineEdit",
+        "title": "TF Agent: Inline Edit",
+        "category": "TF Agent"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "forgeAgent.inlineEdit",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "editorTextFocus"
       }
     ],
     "viewsContainers": {
@@ -97,7 +115,8 @@
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "register-agent": "esbuild scripts/register-agent.ts --bundle --platform=node --outfile=dist/register-agent.js && node dist/register-agent.js",
     "smoke-test": "esbuild scripts/smoke-test.ts --bundle --platform=node --outfile=dist/smoke-test.js && node dist/smoke-test.js",
-    "test": "esbuild scripts/test-review.ts --bundle --platform=node --external:vscode --outfile=dist/test-review.js && node dist/test-review.js"
+    "test": "esbuild scripts/test-review.ts --bundle --platform=node --external:vscode --outfile=dist/test-review.js && node dist/test-review.js",
+    "test:task-a": "esbuild scripts/test-task-a.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-a.js && node dist/test-task-a.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",

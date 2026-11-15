@@ -225,7 +225,7 @@ export class TrueForgeClient {
                 }
                 if (name === 'call_tool' && parsedArgs?.tool_name) {
                   name = parsedArgs.tool_name;
-                  parsedArgs = parsedArgs.arguments ?? {};
+                  parsedArgs = parsedArgs.input ?? parsedArgs.arguments ?? {};
                 }
                 const info: ToolCallInfo = {
                   id: tc.id,
@@ -256,7 +256,7 @@ export class TrueForgeClient {
                 }
                 if (name === 'call_tool' && parsedArgs?.tool_name) {
                   name = parsedArgs.tool_name;
-                  parsedArgs = parsedArgs.arguments ?? {};
+                  parsedArgs = parsedArgs.input ?? parsedArgs.arguments ?? {};
                 }
                 const info: ToolCallInfo = {
                   id: tc.id,

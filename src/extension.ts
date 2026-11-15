@@ -4,6 +4,7 @@ import { LocalMcpServer } from './mcp/server';
 import { DiffReviewEngine } from './review/diffReview';
 import { ProposedContentProvider } from './review/virtualDocProvider';
 import { AgentPanelProvider } from './webview/agentPanel';
+import { InlineEditController } from './editor/inlineEdit';
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('[Forge Agent] Activating extension...');
@@ -231,7 +232,17 @@ export async function activate(context: vscode.ExtensionContext) {
 
   panelProvider.onCancelRequested(handleCancelTurn);
 
-  // 7. Register Commands
+  // 7. Register Commands & Inline Edit Controller
+  const inlineController = new InlineEditController(tfClient, reviewEngine);
+
+  const inlineEditCommand = vscode.commands.registerCommand('forgeAgent.inlineEdit', async () => {
+    await inlineController.triggerInlineEdit();
+  });
+
+  const tfInlineEditCommand = vscode.commands.registerCommand('tfAgent.inlineEdit', async () => {
+    await inlineController.triggerInlineEdit();
+  });
+
   const openPanelCommand = vscode.commands.registerCommand('forgeAgent.openPanel', () => {
     panelProvider.show();
   });
@@ -266,6 +277,9 @@ export async function activate(context: vscode.ExtensionContext) {
     cancelTurnCommand,
     undoLastChangeCommand,
     tfUndoLastChangeCommand,
+    inlineEditCommand,
+    tfInlineEditCommand,
+    inlineController.getStatusBarItem(),
     {
       dispose: () => {
         void mcpServer.stop();
