@@ -47,3 +47,4 @@ Build a VS Code coding agent extension (TypeScript).
 - **Shell Execution**: `run_command` must execute via PowerShell. Never assume `&&`, Unix shell builtins, or Linux-style paths.
 - **File Paths**: Always use `path.join` and `vscode.Uri` for cross-platform path handling.
 - **Python / Virtual Environment**: The Flask venv is activated with `.venv\Scripts\Activate.ps1`.
+
