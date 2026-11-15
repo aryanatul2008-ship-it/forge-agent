@@ -1,13 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { TrueForge } from '@truefoundry/trueforge-sdk';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 async function main() {
-  const configPath = path.resolve(__dirname, '..', 'agent', 'agent.config.json');
+  const configPath = path.resolve(process.cwd(), 'agent', 'agent.config.json');
   if (!fs.existsSync(configPath)) {
     console.error(`Agent configuration file not found at ${configPath}`);
     process.exit(1);

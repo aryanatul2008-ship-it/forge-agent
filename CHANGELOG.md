@@ -22,4 +22,13 @@ All notable changes to this project will be documented in this file.
   - Verified live interception of `tool.approval_required`, tool call inspection, and dispatch of `user.tool_approval` (allow) via `client.sessions.createTurnEvents`, followed by tool execution and successful `turn.done`.
   - Verified turn cancellation via `client.sessions.cancel`, confirmed by `turn.done` with `status: "cancelled"` and `reason: "client-cancelled"`.
 - Documented TrueForge SSRF policy requirement (`OUTBOUND_URL_ALLOWED_HOSTS` or `NETWORK_POLICY_ENABLED=false`) in `NOTES.md` for local loopback MCP servers.
+- Full architectural scaffolding across modular subdirectories:
+  - `src/trueforge/`: `TrueForgeClient` wrapper implementing session creation, turn streaming, cancellation, and tool approvals via `@truefoundry/trueforge-sdk`.
+  - `src/mcp/`: `LocalMcpServer` and `executeEditorTool` exposing editor capabilities (`read_file`, `search_workspace`, `find_symbol`, `propose_edit`, `run_command`) with bearer authentication and dynamic port fallback.
+  - `src/review/`: `DiffReviewEngine` providing in-memory staging for proposed edits, per-hunk user decisions, and safe atomic `WorkspaceEdit` application.
+  - `src/context/`: `WorkspaceRetrieval` and `enforceContextBudget` enforcing a strict ~3,500 token limit with truncation annotations on Windows.
+  - `src/webview/`: `AgentPanelProvider` implementing a VS Code WebviewViewProvider showing initial state `ready`.
+  - Added command `"TF Agent: Open Panel"` (`forgeAgent.openPanel`) and contributed TrueForge URL/port/models settings.
+  - Added `.vscode/launch.json` and `.vscode/tasks.json` supporting F5 Extension Development Host launching with preLaunch `npm: build` task.
+  - Updated `README.md` with full architecture documentation, setup instructions, and command reference.
 

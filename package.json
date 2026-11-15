@@ -11,9 +11,19 @@
     "AI",
     "Programming Languages"
   ],
+  "activationEvents": [
+    "onView:forgeAgent.chatView",
+    "onCommand:forgeAgent.openPanel",
+    "onCommand:tfAgent.openPanel"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "forgeAgent.openPanel",
+        "title": "TF Agent: Open Panel",
+        "category": "TF Agent"
+      },
       {
         "command": "forgeAgent.openChat",
         "title": "Forge Agent: Open Chat",
