@@ -1,0 +1,92 @@
+{
+  "name": "forge-agent",
+  "displayName": "Forge Agent",
+  "description": "VS Code coding agent client powered by TrueForge",
+  "version": "0.1.0",
+  "publisher": "forge-agent",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "forgeAgent.openChat",
+        "title": "Forge Agent: Open Chat",
+        "category": "Forge Agent"
+      },
+      {
+        "command": "forgeAgent.cancelTurn",
+        "title": "Forge Agent: Cancel Turn",
+        "category": "Forge Agent"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forge-agent-sidebar",
+          "title": "Forge Agent",
+          "icon": "$(copilot)"
+        }
+      ]
+    },
+    "views": {
+      "forge-agent-sidebar": [
+        {
+          "type": "webview",
+          "id": "forgeAgent.chatView",
+          "name": "Agent Chat"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Forge Agent",
+      "properties": {
+        "forgeAgent.trueforgeUrl": {
+          "type": "string",
+          "default": "http://localhost:8790",
+          "description": "URL of the local TrueForge agent server"
+        },
+        "forgeAgent.mcpPort": {
+          "type": "number",
+          "default": 8795,
+          "description": "Default port for the local MCP server (falls back to ephemeral port if busy)"
+        },
+        "forgeAgent.models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "google-gemini/gemini-3-1-flash-lite",
+            "google-gemini/gemini-3-5-flash-lite"
+          ],
+          "description": "Ordered list of model FQNs (primary first, followed by fallbacks)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "register-agent": "ts-node --esm scripts/register-agent.ts",
+    "smoke-test": "ts-node --esm scripts/smoke-test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "@truefoundry/trueforge-sdk": "^0.185.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
+  }
+}

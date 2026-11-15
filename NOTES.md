@@ -137,24 +137,39 @@ Of TrueForge's context-engineering capabilities:
   - Auto-fallback: If port 8795 is busy, automatically bind to a free ephemeral port (`portfinder` or `net.createServer({ port: 0 })`).
   - Security: Bind exclusively to `127.0.0.1`. Generate a 32-byte cryptographic bearer token on extension startup and require it on every MCP HTTP request.
 - **TrueForge MCP Registration**:
-  - Register/upsert via `PUT /api/v1/settings/mcp-servers`:
+  - The extension starts an in-memory MCP server with `SSEServerTransport` (`GET /sse`, `POST /message`) bound to `127.0.0.1` on default port `8795` (or ephemeral fallback if busy).
+  - Register/upsert via SDK `client.settings.mcpServers.createOrUpdate(...)` (or `PUT /api/v1/settings/mcp-servers`):
     ```json
     {
       "manifest": {
         "type": "remote",
         "name": "vscode-ide",
-        "url": "http://127.0.0.1:8795/mcp",
+        "url": "http://127.0.0.1:8795/sse",
         "description": "VS Code editor capabilities",
         "auth": {
           "type": "header",
           "headers": {
-            "Authorization": "Bearer <generated-token>"
+            "authorization": "Bearer <generated-token>"
           }
         }
       }
     }
     ```
+- **TrueForge SSRF Outbound Guard (CRITICAL FOR LOCAL MCP)**:
+  - By default, TrueForge's `ssrfGuard.ts` blocks all private/loopback IP addresses (`127.0.0.1`, `localhost`) with `Outbound URL blocked for host "127.0.0.1"`.
+  - To allow TrueForge to connect to local MCP servers, TrueForge MUST be started with loopback hosts permitted:
+    `$env:OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","localhost"]'; npx @truefoundry/trueforge`
+    or with `$env:NETWORK_POLICY_ENABLED="false"`.
 - **Inline Spec Session Creation**:
   - `agent/agent.config.json` stores the base agent spec.
   - Extension reads `agent/agent.config.json`, attaches the dynamic MCP server reference, and calls `client.sessions.create({ agent: { spec: agentSpec } })`.
   - Verified on live instance: Sessions appear in TrueForge UI (`http://localhost:8790/sessions`) with full turn transcripts and tool call logs.
+- **End-to-End Smoke Test Verification**:
+  - Verified via `scripts/smoke-test.ts` on live TrueForge:
+    1. Local MCP server with bearer authentication is dynamically registered.
+    2. Inline-spec session is created with `require_approval_for_tools: ['echo_with_approval']`.
+    3. `tool.approval_required` event is intercepted from the turn stream.
+    4. Client sends `user.tool_approval` (allow) via `client.sessions.createTurnEvents`.
+    5. MCP server executes the gated tool and returns the result to TrueForge.
+    6. Turn finishes with `turn.done` (`status: "done"`).
+    7. Separate turn cancellation via `client.sessions.cancel` immediately halts turn and emits `turn.done` (`status: "cancelled"`, `reason: "client-cancelled"`).
