@@ -31,4 +31,17 @@ All notable changes to this project will be documented in this file.
   - Added command `"TF Agent: Open Panel"` (`forgeAgent.openPanel`) and contributed TrueForge URL/port/models settings.
   - Added `.vscode/launch.json` and `.vscode/tasks.json` supporting F5 Extension Development Host launching with preLaunch `npm: build` task.
   - Updated `README.md` with full architecture documentation, setup instructions, and command reference.
+- Implemented full `TrueForgeClient` in `src/trueforge/client.ts` using `@truefoundry/trueforge-sdk`:
+  - Session lifecycle management (`createSession`, `getOrCreateSession`, `resetSession`) with inline agent spec.
+  - Asynchronous event streaming (`streamTurn`) forwarding token deltas, tool calls, tool results, approvals, and terminal state (`turn.done`).
+  - Integrated `AbortController` and instant backend cancellation (`cancelTurn`).
+  - Tool approval dispatch (`sendToolApproval`) supporting allow/deny decisions.
+- Enhanced Webview Chat UI in `src/webview/agentPanel.ts` and `src/webview/types.ts`:
+  - Real-time status badge and indicator (`Ready`, `Streaming...`, `Tool Call`, `Cancelled`, `Error`).
+  - Message stream supporting user chat bubbles, incremental assistant markdown rendering, collapsible tool call cards with JSON arguments, tool results, and error banners.
+  - Interactive multiline input box with Enter to send / Shift+Enter for newlines, Send button, and an immediate Cancel button that toggles during turn execution.
+- Connected extension host in `src/extension.ts` ensuring non-blocking asynchronous execution between VS Code, webview panel, and TrueForge client.
+- Added live automated verification scripts:
+  - `scripts/test-plain-turn.ts`: Validated plain question ("What is 15 * 4? Answer in one sentence.") streaming response ("15 * 4 equals 60.") through TrueForge on `http://localhost:8791`.
+  - `scripts/test-client-cancel.ts`: Validated immediate turn cancellation during token generation, receiving `turn.done` with `status: "cancelled"` and `reason: "client-cancelled"`.
 

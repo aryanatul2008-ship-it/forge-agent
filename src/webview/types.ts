@@ -6,7 +6,12 @@ export type WebviewMessage =
   | { type: 'hunkDecision'; toolCallId: string; hunkId: string; decision: 'accepted' | 'rejected' };
 
 export type ExtensionToWebviewMessage =
-  | { type: 'status'; text: string }
-  | { type: 'messageChunk'; text: string }
-  | { type: 'toolApprovalRequired'; toolCallId: string; toolName: string; args: any }
-  | { type: 'turnDone'; status: string; reason?: string };
+  | { type: 'status'; status: string; details?: string }
+  | { type: 'userMessage'; text: string }
+  | { type: 'assistantStart'; turnId: string }
+  | { type: 'token'; content: string }
+  | { type: 'toolCall'; id: string; name: string; arguments: any }
+  | { type: 'toolResponse'; toolCallId: string; content: string }
+  | { type: 'toolApprovalRequired'; toolCallId: string; name: string; arguments: any }
+  | { type: 'turnDone'; status: string; reason?: string; metrics?: any }
+  | { type: 'error'; message: string };

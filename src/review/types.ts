@@ -23,3 +23,4 @@ export interface EditApplicationResult {
   rejectedCount: number;
   summary: string;
 }
+

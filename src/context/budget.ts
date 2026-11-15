@@ -27,3 +27,4 @@ export function enforceContextBudget(
     `Showing ${keptLines} of ${totalLines} lines (cut ${cutChars} characters / ~${Math.round(cutChars / CHARS_PER_TOKEN)} tokens).]`
   );
 }
+

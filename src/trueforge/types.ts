@@ -3,6 +3,18 @@ export interface TrueForgeConfig {
   models: string[];
 }
 
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  arguments: any;
+  sourceEventId?: string;
+}
+
+export interface ToolResponseInfo {
+  toolCallId: string;
+  content: string;
+}
+
 export interface TurnApprovalRequest {
   toolCallId: string;
   threadId?: string;
@@ -12,8 +24,12 @@ export interface TurnApprovalRequest {
 
 export interface StreamEventHandlers {
   onEvent?: (event: any) => void;
+  onTurnCreated?: (turnId: string) => void;
   onDelta?: (text: string) => void;
-  onApprovalRequired?: (toolCalls: Array<{ id: string; sourceEventId?: string; name?: string; args?: any }>) => void;
-  onDone?: (status: string, reason?: string) => void;
+  onToolCall?: (call: ToolCallInfo) => void;
+  onToolResponse?: (response: ToolResponseInfo) => void;
+  onApprovalRequired?: (toolCalls: ToolCallInfo[]) => void;
+  onStatusUpdate?: (status: string, details?: string) => void;
+  onDone?: (status: string, reason?: string, metrics?: any) => void;
   onError?: (error: Error) => void;
 }
