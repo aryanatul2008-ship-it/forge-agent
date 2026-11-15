@@ -36,6 +36,21 @@ export class LocalMcpServer {
     return `http://127.0.0.1:${this.port}/sse`;
   }
 
+  public isListening(): boolean {
+    return this.httpServer !== null && this.httpServer.listening;
+  }
+
+  public getInfo(): McpServerInfo | null {
+    if (!this.isListening()) {
+      return null;
+    }
+    return {
+      port: this.port,
+      url: this.getUrl(),
+      token: this.token,
+    };
+  }
+
   private createMcpProtocolInstance(): Server {
     const server = new Server(
       { name: 'vscode-ide', version: '1.0.0' },
@@ -51,7 +66,6 @@ export class LocalMcpServer {
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const toolName = request.params.name;
       const args = request.params.arguments ?? {};
-      // In TrueForge, call_id is passed or synthesized; use request.params.meta or random ID if missing
       const toolCallId = (request.params as any)?._meta?.call_id ?? randomUUID();
 
       const result = await executeEditorTool(
@@ -74,14 +88,29 @@ export class LocalMcpServer {
    * Starts the local MCP server on desiredPort, falling back to an ephemeral port if busy.
    */
   public async start(desiredPort: number = 8795): Promise<McpServerInfo> {
+    if (this.isListening()) {
+      return this.getInfo()!;
+    }
+
     const tryListen = (port: number): Promise<number> => {
       return new Promise((resolve, reject) => {
         const srv = http.createServer(async (req, res) => {
+          // Handle CORS preflight
+          if (req.method === 'OPTIONS') {
+            res.writeHead(204, {
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+              'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+            });
+            res.end();
+            return;
+          }
+
           // Verify Bearer Auth Header
           const authHeader = req.headers.authorization;
           if (authHeader !== `Bearer ${this.token}`) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Unauthorized' }));
+            res.end(JSON.stringify({ error: 'Unauthorized: Invalid or missing bearer token' }));
             return;
           }
 
@@ -106,7 +135,7 @@ export class LocalMcpServer {
               await session.transport.handlePostMessage(req, res);
             } else {
               res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'No active SSE connection' }));
+              res.end(JSON.stringify({ error: 'No active SSE connection found' }));
             }
           } else {
             res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -131,7 +160,7 @@ export class LocalMcpServer {
       this.port = await tryListen(desiredPort);
     } catch (err: any) {
       if (err.code === 'EADDRINUSE') {
-        console.warn(`Port ${desiredPort} is in use; falling back to ephemeral port...`);
+        console.warn(`[LocalMcpServer] Port ${desiredPort} in use; falling back to ephemeral port...`);
         this.port = await tryListen(0);
       } else {
         throw err;
@@ -159,4 +188,3 @@ export class LocalMcpServer {
     }
   }
 }
-

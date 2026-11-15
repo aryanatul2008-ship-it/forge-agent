@@ -33,6 +33,16 @@
         "command": "forgeAgent.cancelTurn",
         "title": "Forge Agent: Cancel Turn",
         "category": "Forge Agent"
+      },
+      {
+        "command": "forgeAgent.undoLastChange",
+        "title": "TF Agent: Undo Last Applied Change",
+        "category": "TF Agent"
+      },
+      {
+        "command": "tfAgent.undoLastChange",
+        "title": "TF Agent: Undo Last Applied Change",
+        "category": "TF Agent"
       }
     ],
     "viewsContainers": {
@@ -85,8 +95,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
-    "register-agent": "ts-node --esm scripts/register-agent.ts",
-    "smoke-test": "ts-node --esm scripts/smoke-test.ts"
+    "register-agent": "esbuild scripts/register-agent.ts --bundle --platform=node --outfile=dist/register-agent.js && node dist/register-agent.js",
+    "smoke-test": "esbuild scripts/smoke-test.ts --bundle --platform=node --outfile=dist/smoke-test.js && node dist/smoke-test.js",
+    "test": "esbuild scripts/test-review.ts --bundle --platform=node --external:vscode --outfile=dist/test-review.js && node dist/test-review.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",

@@ -44,4 +44,18 @@ All notable changes to this project will be documented in this file.
 - Added live automated verification scripts:
   - `scripts/test-plain-turn.ts`: Validated plain question ("What is 15 * 4? Answer in one sentence.") streaming response ("15 * 4 equals 60.") through TrueForge on `http://localhost:8791`.
   - `scripts/test-client-cancel.ts`: Validated immediate turn cancellation during token generation, receiving `turn.done` with `status: "cancelled"` and `reason: "client-cancelled"`.
+- Implemented read-only editor MCP tools in `src/mcp/` and `src/context/`:
+  - `list_dir`: workspace directory listing with recursive depth, file types, and size annotations.
+  - `read_file`: targeted 1-indexed line-range reading (`start_line`, `end_line`), path alias resilience, and context budgeting.
+  - `search_workspace`: text and regex search with relevance-ranked snippets, file paths, line numbers, and surrounding context.
+  - `find_symbol`: workspace symbol lookup using VS Code symbol provider with Python regex definition fallback for functions, classes, and variables.
+  - Verified live agent test against Flask repository (`scripts/test-flask-agent.ts`): agent located `get_debug_flag` in `src/flask/helpers.py:28` using deferred tool loading (`list_tools`, `get_tool_info`, `find_symbol`, `read_file`).
+- Implemented in-memory diff review engine and staging store in `src/review/`:
+  - `src/review/diff.ts`: Line-level Myers/LCS diff algorithm computing structured `DiffHunk` records, plus reverse-order `applyPartialHunks` engine.
+  - `src/review/diffReview.ts`: In-memory staging store holding proposed edits per file (never written to disk before confirmation); handles multiple files in one run, repeated edits to the same file, and stale file conflict detection.
+  - `src/review/history.ts`: `UndoHistoryStack` tracking prior file snapshots for clean reverts.
+  - Contributed commands `"TF Agent: Undo Last Applied Change"` (`forgeAgent.undoLastChange`, `tfAgent.undoLastChange`) to revert applied agent edits.
+  - `src/review/virtualDocProvider.ts`: `forge-proposed:` TextDocumentContentProvider enabling native side-by-side diff review via `vscode.diff`.
+  - Enhanced Webview UI (`src/webview/agentPanel.ts`) with interactive Diff Review Cards featuring per-hunk Accept/Reject toggles, Accept All, Reject All, Open Diff View, and approval submission driven by TrueForge tool gating.
+  - Unit test suite (`scripts/test-review.ts`, `npm test`): Verified single/multiple hunks, insertions, deletions, identical text, partial apply combinations, multi-file staging, repeated edits, stale conflict detection, and undo stack.
 

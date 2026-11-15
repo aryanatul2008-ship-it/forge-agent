@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { TrueForge } from '@truefoundry/trueforge-sdk';
 import {
   TrueForgeConfig,
@@ -75,6 +77,25 @@ export class TrueForgeClient {
   }
 
   /**
+   * Helper to load agent configuration from agent/agent.config.json.
+   */
+  private loadAgentConfigFile(): any {
+    try {
+      const candidates = [
+        path.resolve(process.cwd(), 'agent', 'agent.config.json'),
+        path.resolve(__dirname, '..', 'agent', 'agent.config.json'),
+        path.resolve(__dirname, '..', '..', 'agent', 'agent.config.json'),
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          return JSON.parse(fs.readFileSync(p, 'utf-8'));
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  /**
    * Create an inline-spec session pointing to the registered MCP server.
    */
   public async createSession(options?: {
@@ -83,25 +104,33 @@ export class TrueForgeClient {
     systemPrompt?: string;
     requireApprovalForTools?: string[];
   }): Promise<string> {
-    const model = options?.modelName ?? this.getPrimaryModel();
+    const agentConfig = this.loadAgentConfigFile();
+    const model = options?.modelName ?? this.getPrimaryModel() ?? agentConfig?.model?.name ?? 'google-gemini/gemini-3-1-flash-lite';
     const mcpServer = options?.mcpServerName ?? 'vscode-ide';
+    const instructions =
+      options?.systemPrompt ??
+      agentConfig?.instructions ??
+      'You are Forge Agent, an expert coding assistant embedded in VS Code. Use editor MCP tools to inspect and safely modify files.';
+
+    const requireApprovalForTools =
+      options?.requireApprovalForTools ??
+      agentConfig?.mcp_servers?.[0]?.require_approval_for_tools ??
+      ['propose_edit', 'run_command'];
 
     const session = await this.client.sessions.create({
       agent: {
         spec: {
           model: { name: model },
-          instructions:
-            options?.systemPrompt ??
-            'You are Forge Agent, an expert coding assistant embedded in VS Code. Use editor MCP tools to inspect and safely modify files.',
+          instructions,
           mcpServers: [
             {
               name: mcpServer,
               enableTools: ['@all'],
-              requireApprovalForTools: options?.requireApprovalForTools ?? ['propose_edit', 'run_command'],
+              requireApprovalForTools,
               preload: false,
             },
           ],
-          config: {
+          config: agentConfig?.config ?? {
             sandbox: { enabled: false },
             dynamicSubAgents: { enabled: true },
             contextManagement: {
@@ -187,14 +216,16 @@ export class TrueForgeClient {
             const rawCalls = (event as any).toolCalls || (event as any).tool_calls;
             if (Array.isArray(rawCalls)) {
               for (const tc of rawCalls) {
-                const name = tc.function?.name ?? tc.toolInfo?.name ?? 'unknown_tool';
+                let name = tc.function?.name ?? tc.toolInfo?.name ?? 'unknown_tool';
                 let parsedArgs = tc.function?.arguments;
                 if (typeof parsedArgs === 'string') {
                   try {
                     parsedArgs = JSON.parse(parsedArgs);
-                  } catch {
-                    // Raw string
-                  }
+                  } catch {}
+                }
+                if (name === 'call_tool' && parsedArgs?.tool_name) {
+                  name = parsedArgs.tool_name;
+                  parsedArgs = parsedArgs.arguments ?? {};
                 }
                 const info: ToolCallInfo = {
                   id: tc.id,
@@ -213,6 +244,31 @@ export class TrueForgeClient {
           }
 
           case 'model.message.delta': {
+            const deltaCalls = (event as any).toolCalls || (event as any).tool_calls;
+            if (Array.isArray(deltaCalls)) {
+              for (const tc of deltaCalls) {
+                let name = tc.function?.name ?? tc.toolInfo?.name ?? 'unknown_tool';
+                let parsedArgs = tc.function?.arguments;
+                if (typeof parsedArgs === 'string') {
+                  try {
+                    parsedArgs = JSON.parse(parsedArgs);
+                  } catch {}
+                }
+                if (name === 'call_tool' && parsedArgs?.tool_name) {
+                  name = parsedArgs.tool_name;
+                  parsedArgs = parsedArgs.arguments ?? {};
+                }
+                const info: ToolCallInfo = {
+                  id: tc.id,
+                  name,
+                  arguments: parsedArgs,
+                  sourceEventId: event.id,
+                };
+                this.recentToolCalls.set(tc.id, info);
+                handlers.onToolCall?.(info);
+                handlers.onStatusUpdate?.('calling_tool', `Agent calling: ${name}`);
+              }
+            }
             const deltaContent = (event as any).content;
             if (typeof deltaContent === 'string' && deltaContent.length > 0) {
               handlers.onDelta?.(deltaContent);
@@ -294,8 +350,15 @@ export class TrueForgeClient {
   public async sendToolApproval(
     sessionId: string,
     turnId: string,
-    approval: TurnApprovalRequest
+    approvalOrId: TurnApprovalRequest | string,
+    decision?: 'allow' | 'deny',
+    reason?: string
   ): Promise<void> {
+    const approval: TurnApprovalRequest =
+      typeof approvalOrId === 'string'
+        ? { toolCallId: approvalOrId, status: decision ?? 'allow', reason }
+        : approvalOrId;
+
     await this.client.sessions.createTurnEvents(sessionId, turnId, {
       events: [
         {

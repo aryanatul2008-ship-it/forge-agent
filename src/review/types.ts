@@ -14,6 +14,9 @@ export interface StagedEdit {
   filePath: string;
   description: string;
   hunks: DiffHunk[];
+  baseContent: string;
+  baseContentHash: string;
+  proposedContent?: string;
   createdAt: number;
 }
 
@@ -22,5 +25,13 @@ export interface EditApplicationResult {
   appliedCount: number;
   rejectedCount: number;
   summary: string;
+  isStale?: boolean;
 }
 
+export interface UndoHistoryEntry {
+  id: string;
+  filePath: string;
+  timestamp: number;
+  previousContent: string;
+  appliedHunksCount: number;
+}

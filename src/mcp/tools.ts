@@ -5,6 +5,23 @@ import { DiffReviewEngine } from '../review/diffReview';
 export function getEditorTools(): Tool[] {
   return [
     {
+      name: 'list_dir',
+      description: 'List contents of a directory in the workspace with file types and sizes. Output is capped at ~3,500 tokens.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Relative directory path from the workspace root (e.g. "." or "src/flask")',
+          },
+          depth: {
+            type: 'number',
+            description: 'Recursion depth (default: 1, max: 3)',
+          },
+        },
+      },
+    },
+    {
       name: 'read_file',
       description: 'Read the contents of a file in the workspace within an optional 1-indexed line range. Output is capped at ~3,500 tokens.',
       inputSchema: {
@@ -12,7 +29,7 @@ export function getEditorTools(): Tool[] {
         properties: {
           path: {
             type: 'string',
-            description: 'Relative path of the file from the workspace root',
+            description: 'Relative path of the file from the workspace root (e.g. "src/flask/helpers.py")',
           },
           start_line: {
             type: 'number',
@@ -28,17 +45,25 @@ export function getEditorTools(): Tool[] {
     },
     {
       name: 'search_workspace',
-      description: 'Search workspace files for text matches. Returns matched files, line numbers, and snippets.',
+      description: 'Search workspace files for text or regex matches. Returns ranked snippets with file paths, line numbers, and context. Output is capped at ~3,500 tokens.',
       inputSchema: {
         type: 'object',
         properties: {
           query: {
             type: 'string',
-            description: 'Text string to search for across the workspace',
+            description: 'Text string or regex pattern to search for across the workspace',
           },
-          max_files: {
+          is_regex: {
+            type: 'boolean',
+            description: 'Whether query is a regular expression (default: false)',
+          },
+          max_results: {
             type: 'number',
-            description: 'Maximum number of matching files to return (default: 20)',
+            description: 'Maximum number of ranked matching snippets to return (default: 25, max: 50)',
+          },
+          file_pattern: {
+            type: 'string',
+            description: 'Optional substring or extension filter for file paths (e.g. ".py" or "helpers")',
           },
         },
         required: ['query'],
@@ -46,13 +71,13 @@ export function getEditorTools(): Tool[] {
     },
     {
       name: 'find_symbol',
-      description: 'Search for functions, classes, methods, or symbols in the workspace.',
+      description: 'Search for symbol definitions (functions, classes, methods, variables) across the workspace using VS Code symbol provider with Python regex fallback.',
       inputSchema: {
         type: 'object',
         properties: {
           query: {
             type: 'string',
-            description: 'Symbol name or partial name to search for',
+            description: 'Symbol name to search for (e.g. "get_debug_flag" or "Flask")',
           },
         },
         required: ['query'],
@@ -64,17 +89,29 @@ export function getEditorTools(): Tool[] {
       inputSchema: {
         type: 'object',
         properties: {
+          file: {
+            type: 'string',
+            description: 'Relative path of the target file to modify (e.g. "src/flask/helpers.py")',
+          },
           path: {
             type: 'string',
-            description: 'Relative path of the target file to modify',
+            description: 'Alias for file',
+          },
+          explanation: {
+            type: 'string',
+            description: 'Clear description or explanation of the proposed modifications',
           },
           description: {
             type: 'string',
-            description: 'Clear description of the proposed modifications',
+            description: 'Alias for explanation',
+          },
+          new_content: {
+            type: 'string',
+            description: 'Complete new replacement content for the file (hunks are computed automatically)',
           },
           hunks: {
             type: 'array',
-            description: 'List of replacement hunks',
+            description: 'Optional explicit replacement hunks',
             items: {
               type: 'object',
               properties: {
@@ -89,7 +126,6 @@ export function getEditorTools(): Tool[] {
             },
           },
         },
-        required: ['path', 'description', 'hunks'],
       },
     },
     {
@@ -117,40 +153,92 @@ export async function executeEditorTool(
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (toolName) {
+      case 'list_dir': {
+        const dirPath = typeof args?.path === 'string' ? args.path : '.';
+        const depth = args?.depth ? Number(args.depth) : 1;
+        const text = await WorkspaceRetrieval.listDir(dirPath, depth);
+        return { content: [{ type: 'text', text }] };
+      }
+
       case 'read_file': {
-        const text = await WorkspaceRetrieval.readFile(
-          args.path,
-          args.start_line,
-          args.end_line
-        );
+        const filePath = args?.path || args?.file || args?.file_path || args?.filepath;
+        if (!filePath) {
+          return { content: [{ type: 'text', text: 'Error: "path" argument is required for read_file' }], isError: true };
+        }
+        const startLine = args.start_line !== undefined ? Number(args.start_line) : undefined;
+        const endLine = args.end_line !== undefined ? Number(args.end_line) : undefined;
+        const text = await WorkspaceRetrieval.readFile(filePath, startLine, endLine);
         return { content: [{ type: 'text', text }] };
       }
 
       case 'search_workspace': {
-        const text = await WorkspaceRetrieval.searchWorkspace(args.query, args.max_files);
+        if (!args?.query) {
+          return { content: [{ type: 'text', text: 'Error: "query" argument is required for search_workspace' }], isError: true };
+        }
+        const text = await WorkspaceRetrieval.searchWorkspace(args.query, {
+          isRegex: Boolean(args.is_regex),
+          maxResults: args.max_results !== undefined ? Number(args.max_results) : 25,
+          filePattern: args.file_pattern,
+        });
         return { content: [{ type: 'text', text }] };
       }
 
       case 'find_symbol': {
+        if (!args?.query) {
+          return { content: [{ type: 'text', text: 'Error: "query" argument is required for find_symbol' }], isError: true };
+        }
         const text = await WorkspaceRetrieval.findSymbol(args.query);
         return { content: [{ type: 'text', text }] };
       }
 
       case 'propose_edit': {
-        // When propose_edit executes, it was already approved (or reviewed) by the user.
-        // It applies the accepted hunks to the file via WorkspaceEdit.
+        const filePath = args?.file || args?.path || args?.file_path;
+        if (!filePath) {
+          return {
+            content: [{ type: 'text', text: 'Error: "file" or "path" argument is required for propose_edit' }],
+            isError: true,
+          };
+        }
+        const explanation = args?.explanation || args?.description || 'Proposed code changes';
+        const newContent = args?.new_content || args?.newContent || args?.content;
+        const hunks = args?.edits || args?.hunks;
+
+        let staged = reviewEngine.getStagedEdit(toolCallId);
+        if (!staged) {
+          staged = await reviewEngine.stageEdit(toolCallId, filePath, explanation, { newContent, hunks });
+        }
+
+        // Check hunk decisions
+        const hasAccepted = staged.hunks.some((h) => h.status === 'accepted');
+        const hasRejected = staged.hunks.some((h) => h.status === 'rejected');
+
+        // If no explicit decision yet (e.g. approved overall), accept all pending
+        if (!hasAccepted && !hasRejected) {
+          reviewEngine.setAllHunksDecision(toolCallId, 'accepted');
+        }
+
         const result = await reviewEngine.applyApprovedEdit(toolCallId);
+        if (result.isStale) {
+          return {
+            content: [{ type: 'text', text: `Propose Edit Conflict: ${result.summary}` }],
+            isError: true,
+          };
+        }
+
         return {
           content: [
             {
               type: 'text',
-              text: `Propose Edit Result for ${result.filePath}: ${result.summary}`,
+              text: `Propose Edit Result for ${result.filePath}: ${result.summary} (Applied: ${result.appliedCount}, Rejected: ${result.rejectedCount})`,
             },
           ],
         };
       }
 
       case 'run_command': {
+        if (!args?.command) {
+          return { content: [{ type: 'text', text: 'Error: "command" argument is required for run_command' }], isError: true };
+        }
         const result = await WorkspaceRetrieval.runCommand(args.command);
         const output = `Exit code: ${result.exitCode}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`;
         return { content: [{ type: 'text', text: output }] };
@@ -164,9 +252,8 @@ export async function executeEditorTool(
     }
   } catch (err: any) {
     return {
-      content: [{ type: 'text', text: `Tool error (${toolName}): ${err.message}` }],
+      content: [{ type: 'text', text: `Tool error (${toolName}): ${err?.message || err}` }],
       isError: true,
     };
   }
 }
-

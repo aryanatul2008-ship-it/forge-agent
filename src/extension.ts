@@ -2,13 +2,22 @@ import * as vscode from 'vscode';
 import { TrueForgeClient } from './trueforge/client';
 import { LocalMcpServer } from './mcp/server';
 import { DiffReviewEngine } from './review/diffReview';
+import { ProposedContentProvider } from './review/virtualDocProvider';
 import { AgentPanelProvider } from './webview/agentPanel';
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('[Forge Agent] Activating extension...');
 
-  // 1. Initialize Review Engine
+  // 1. Initialize Review Engine & Virtual Document Provider
   const reviewEngine = new DiffReviewEngine();
+  const proposedProvider = new ProposedContentProvider(reviewEngine);
+
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      ProposedContentProvider.scheme,
+      proposedProvider
+    )
+  );
 
   // 2. Initialize and Register Webview View Provider
   const panelProvider = new AgentPanelProvider(context.extensionUri);
@@ -75,7 +84,7 @@ export async function activate(context: vscode.ExtensionContext) {
       console.error('[Forge Agent] Failed to start local MCP server:', err);
     });
 
-  // 6. Connect Webview Events to TrueForge Client
+  // 6. Connect Webview Events & Diff Review to TrueForge Client
   panelProvider.onPromptSubmitted(async (userPrompt: string) => {
     try {
       panelProvider.postMessage({ type: 'status', status: 'running', details: 'Connecting to agent...' });
@@ -109,14 +118,38 @@ export async function activate(context: vscode.ExtensionContext) {
             content: resp.content,
           });
         },
-        onApprovalRequired: (calls) => {
+        onApprovalRequired: async (calls) => {
           for (const call of calls) {
-            panelProvider.postMessage({
-              type: 'toolApprovalRequired',
-              toolCallId: call.id,
-              name: call.name,
-              arguments: call.arguments,
-            });
+            if (call.name === 'propose_edit') {
+              const filePath = call.arguments?.file || call.arguments?.path || call.arguments?.file_path;
+              const explanation = call.arguments?.explanation || call.arguments?.description || 'Proposed code modifications';
+              const newContent = call.arguments?.new_content || call.arguments?.newContent || call.arguments?.content;
+              const hunks = call.arguments?.edits || call.arguments?.hunks;
+
+              let staged: any;
+              if (filePath) {
+                try {
+                  staged = await reviewEngine.stageEdit(call.id, filePath, explanation, { newContent, hunks });
+                } catch (stageErr: any) {
+                  console.warn('[Forge Agent] Error staging proposed edit:', stageErr);
+                }
+              }
+
+              panelProvider.postMessage({
+                type: 'toolApprovalRequired',
+                toolCallId: call.id,
+                name: call.name,
+                arguments: call.arguments,
+                edit: staged,
+              });
+            } else {
+              panelProvider.postMessage({
+                type: 'toolApprovalRequired',
+                toolCallId: call.id,
+                name: call.name,
+                arguments: call.arguments,
+              });
+            }
           }
         },
         onStatusUpdate: (status, details) => {
@@ -135,6 +168,43 @@ export async function activate(context: vscode.ExtensionContext) {
         message: err?.message || 'Failed to execute turn in TrueForge',
       });
     }
+  });
+
+  // Tool Approval / Hunk Decisions
+  panelProvider.onApprovalDecision(async (toolCallId, decision, reason) => {
+    try {
+      const sessionId = tfClient.getCurrentSessionId();
+      const turnId = tfClient.getCurrentTurnId();
+      if (sessionId && turnId) {
+        await tfClient.sendToolApproval(sessionId, turnId, toolCallId, decision, reason);
+      }
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`Failed to send tool approval: ${err?.message || err}`);
+    }
+  });
+
+  panelProvider.onHunkDecision((toolCallId, hunkId, decision) => {
+    reviewEngine.setHunkDecision(toolCallId, hunkId, decision);
+  });
+
+  panelProvider.onAllHunksDecision((toolCallId, decision) => {
+    reviewEngine.setAllHunksDecision(toolCallId, decision);
+  });
+
+  panelProvider.onOpenDiff((toolCallId, filePath) => {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+      const rootUri = workspaceFolders[0].uri;
+      const origUri = vscode.Uri.joinPath(rootUri, filePath);
+      const propUri = vscode.Uri.parse(
+        `${ProposedContentProvider.scheme}:/${filePath}?toolCallId=${toolCallId}`
+      );
+      vscode.commands.executeCommand('vscode.diff', origUri, propUri, `Review: ${filePath}`);
+    }
+  });
+
+  reviewEngine.onStagedEditChange((edit) => {
+    panelProvider.postMessage({ type: 'stagedEdit', edit });
   });
 
   // Handle Cancel Requested from Webview or Command
@@ -176,11 +246,26 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const cancelTurnCommand = vscode.commands.registerCommand('forgeAgent.cancelTurn', handleCancelTurn);
 
+  const undoLastChangeCommand = vscode.commands.registerCommand('forgeAgent.undoLastChange', async () => {
+    const result = await reviewEngine.undoLastChange();
+    if (result.success) {
+      vscode.window.showInformationMessage(result.message);
+    } else {
+      vscode.window.showWarningMessage(result.message);
+    }
+  });
+
+  const tfUndoLastChangeCommand = vscode.commands.registerCommand('tfAgent.undoLastChange', async () => {
+    await vscode.commands.executeCommand('forgeAgent.undoLastChange');
+  });
+
   context.subscriptions.push(
     openPanelCommand,
     tfOpenPanelCommand,
     openChatCommand,
     cancelTurnCommand,
+    undoLastChangeCommand,
+    tfUndoLastChangeCommand,
     {
       dispose: () => {
         void mcpServer.stop();
