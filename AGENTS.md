@@ -48,3 +48,29 @@ Build a VS Code coding agent extension (TypeScript).
 - **File Paths**: Always use `path.join` and `vscode.Uri` for cross-platform path handling.
 - **Python / Virtual Environment**: The Flask venv is activated with `.venv\Scripts\Activate.ps1`.
 
+---
+
+## 6. Architecture & Design Decisions
+
+1. **Diff Review via TrueForge Approval**:
+   - The agent spec configures `require_approval_for_tools: ["propose_edit", "run_command"]`.
+   - On `tool.approval_required`, read the call arguments from the referenced `model.message`.
+   - Show the per-hunk diff (or command) in the editor UI.
+   - Collect per-hunk user decisions in an extension-side map keyed by `tool_call_id`.
+   - Send `user.tool_approval` with `allow` (if at least one hunk was accepted) or `deny` with a descriptive reason.
+   - When the `propose_edit` MCP tool subsequently executes, it applies ONLY the accepted hunks via VS Code `WorkspaceEdit` and returns a result summarizing applied vs. rejected hunks. No writes happen before approval.
+2. **Cancel Safety**:
+   - On cancel, immediately invoke `client.sessions.cancel(sessionId)` AND close open diff views, discard staged edits in memory, kill running child processes/commands, and resolve pending MCP tool calls so the turn concludes cleanly.
+   - Ensure git status remains pristine after any cancellation.
+3. **Client-Side Fallback**:
+   - Maintain an ordered list of models in `config.json`.
+   - On transient failure, retry with exponential backoff (max 2 retries).
+   - If a model fails permanently or endpoint/key is invalid (handling both HTTP errors and `turn.done` status `"error"`), recreate the session with the next fallback model in the list and replay the request.
+4. **Context Budgeting**:
+   - Editor MCP tools (`read_file`, `search_workspace`, `find_symbol`, `run_command`) must strictly cap output at ~3,500 tokens (well below TrueForge's 6,000-token offloading threshold), because local sandboxes are unavailable on Windows.
+   - Results exceeding the budget must be ranked and truncated with clear notice of what was cut.
+5. **Context-Engineering Feature Selection**:
+   - Of TrueForge's features, **Deferred Tool Loading** (`preload: false` on MCP servers) and **Dynamic Subagents** (`config.dynamic_sub_agents.enabled: true`) function without requiring an external sandbox on Windows.
+   - Recommended for visible session demo: **Deferred Tool Loading** (clearly visible in turn events via meta-tools `list_tools`, `get_tool_info`, `call_tool`) and **Dynamic Subagents** (visible via `thread.created` / `thread.done` parallel threads).
+6. **Model FQN Format**:
+   - All models configured in `config.json` and agent specs must use Fully Qualified Names (FQNs), e.g. `google-gemini/gemini-3-1-flash-lite`.
