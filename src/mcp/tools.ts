@@ -1,9 +1,28 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { WorkspaceRetrieval } from '../context/retrieval';
 import { DiffReviewEngine } from '../review/diffReview';
+import { ContextEngine } from '../context/engine';
 
 export function getEditorTools(): Tool[] {
   return [
+    {
+      name: 'get_relevant_context',
+      description: 'Retrieve ranked workspace code snippets and symbols relevant to a search query with explicit one-line reasons. Bounded by strict token budget.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query or question describing the code, symbol, or feature to find',
+          },
+          limit: {
+            type: 'number',
+            description: 'Optional maximum number of snippets to return (default: 5, max: 10)',
+          },
+        },
+        required: ['query'],
+      },
+    },
     {
       name: 'list_dir',
       description: 'List contents of a directory in the workspace with file types and sizes. Output is capped at ~3,500 tokens.',
@@ -149,50 +168,86 @@ export async function executeEditorTool(
   toolName: string,
   args: any,
   toolCallId: string,
-  reviewEngine: DiffReviewEngine
+  reviewEngine: DiffReviewEngine,
+  contextEngine?: ContextEngine
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
+    const realArgs = args?.input || args;
     switch (toolName) {
+      case 'get_relevant_context': {
+        const query = realArgs?.query;
+        if (!query) {
+          return {
+            content: [{ type: 'text', text: 'Error: "query" argument is required for get_relevant_context' }],
+            isError: true,
+          };
+        }
+        const engine = contextEngine ?? new ContextEngine();
+        const limit = realArgs?.limit ? Number(realArgs.limit) : 5;
+        const res = await engine.retrieveRelevantContext(query, { maxTokens: 3500 });
+
+        if (res.snippets.length === 0) {
+          return {
+            content: [{ type: 'text', text: `No relevant workspace snippets found for query "${query}".` }],
+          };
+        }
+
+        const lines: string[] = [
+          `Retrieved ${Math.min(res.snippets.length, limit)} ranked context snippets (${res.totalTokens} tokens):\n`,
+        ];
+
+        const topSnippets = res.snippets.slice(0, limit);
+        for (let i = 0; i < topSnippets.length; i++) {
+          const s = topSnippets[i];
+          lines.push(`[Snippet ${i + 1}] ${s.filePath}#L${s.startLine}-L${s.endLine} (Score: ${s.score.toFixed(2)}, ~${s.tokens} tokens)`);
+          lines.push(`Reason: ${s.reason}`);
+          lines.push('```');
+          lines.push(s.content);
+          lines.push('```');
+          lines.push('');
+        }
+
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      }
       case 'list_dir': {
-        const dirPath = typeof args?.path === 'string' ? args.path : '.';
-        const depth = args?.depth ? Number(args.depth) : 1;
+        const dirPath = typeof realArgs?.path === 'string' ? realArgs.path : '.';
+        const depth = realArgs?.depth ? Number(realArgs.depth) : 1;
         const text = await WorkspaceRetrieval.listDir(dirPath, depth);
         return { content: [{ type: 'text', text }] };
       }
 
       case 'read_file': {
-        const filePath = args?.path || args?.file || args?.file_path || args?.filepath;
+        const filePath = realArgs?.path || realArgs?.file || realArgs?.file_path || realArgs?.filepath;
         if (!filePath) {
           return { content: [{ type: 'text', text: 'Error: "path" argument is required for read_file' }], isError: true };
         }
-        const startLine = args.start_line !== undefined ? Number(args.start_line) : undefined;
-        const endLine = args.end_line !== undefined ? Number(args.end_line) : undefined;
+        const startLine = realArgs.start_line !== undefined ? Number(realArgs.start_line) : undefined;
+        const endLine = realArgs.end_line !== undefined ? Number(realArgs.end_line) : undefined;
         const text = await WorkspaceRetrieval.readFile(filePath, startLine, endLine);
         return { content: [{ type: 'text', text }] };
       }
 
       case 'search_workspace': {
-        if (!args?.query) {
+        if (!realArgs?.query) {
           return { content: [{ type: 'text', text: 'Error: "query" argument is required for search_workspace' }], isError: true };
         }
-        const text = await WorkspaceRetrieval.searchWorkspace(args.query, {
-          isRegex: Boolean(args.is_regex),
-          maxResults: args.max_results !== undefined ? Number(args.max_results) : 25,
-          filePattern: args.file_pattern,
+        const text = await WorkspaceRetrieval.searchWorkspace(realArgs.query, {
+          isRegex: Boolean(realArgs.is_regex),
+          maxResults: realArgs.max_results !== undefined ? Number(realArgs.max_results) : 25,
+          filePattern: realArgs.file_pattern,
         });
         return { content: [{ type: 'text', text }] };
       }
 
       case 'find_symbol': {
-        if (!args?.query) {
+        if (!realArgs?.query) {
           return { content: [{ type: 'text', text: 'Error: "query" argument is required for find_symbol' }], isError: true };
         }
-        const text = await WorkspaceRetrieval.findSymbol(args.query);
+        const text = await WorkspaceRetrieval.findSymbol(realArgs.query);
         return { content: [{ type: 'text', text }] };
       }
 
       case 'propose_edit': {
-        const realArgs = args?.input || args;
         const filePath = realArgs?.file || realArgs?.path || realArgs?.file_path;
         if (!filePath) {
           return {
@@ -237,10 +292,10 @@ export async function executeEditorTool(
       }
 
       case 'run_command': {
-        if (!args?.command) {
+        if (!realArgs?.command) {
           return { content: [{ type: 'text', text: 'Error: "command" argument is required for run_command' }], isError: true };
         }
-        const result = await WorkspaceRetrieval.runCommand(args.command);
+        const result = await WorkspaceRetrieval.runCommand(realArgs.command);
         const output = `Exit code: ${result.exitCode}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`;
         return { content: [{ type: 'text', text: output }] };
       }

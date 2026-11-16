@@ -313,6 +313,10 @@ export class DiffReviewEngine {
     };
   }
 
+  public getUndoHistorySize(): number {
+    return this.undoHistory.size();
+  }
+
   /**
    * Reverts the last applied edit from the undo history stack.
    */

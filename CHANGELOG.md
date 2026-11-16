@@ -69,4 +69,19 @@ All notable changes to this project will be documented in this file.
   - Verified with Python runtime: `FLASK_DEBUG=off` returned `False`, `FLASK_DEBUG=n` returned `False`, `FLASK_DEBUG=1` returned `True`.
   - Ran Flask test suite: all 5 pytest tests in `tests/test_helpers.py -k test_get_debug_flag` passed cleanly.
   - Verified clean revert via `"TF Agent: Undo Last Applied Change"`, restoring working tree to clean state.
+- Implemented Agent Mode and executed Task B on Flask repository:
+  - Multi-step autonomous agent loop orchestrating `list_dir`, `read_file`, `search_workspace`, `find_symbol`, `propose_edit`, and `run_command`.
+  - Added `run_command` MCP tool executing via PowerShell on Windows with explicit user approval gating, timeout protection, and output size budgeting.
+  - Implemented interactive Command Approval cards in the webview UI with Approve/Deny buttons, command previews, and exit status rendering.
+  - Added `test:task-b` script executing Task B on Flask: adding built-in `flask config` command masking sensitive keys (`SECRET`, `PASSWORD`, `TOKEN`, `KEY`), touching 3 files (`src/flask/cli.py`, `tests/test_cli.py`, `docs/cli.rst`), passing pytest verification, and clean rollback.
+- Implemented Context Retrieval, Mentions, and Budgeting Strategy (`src/context/`):
+  - `@file` and `@symbol` mentions in chat input with interactive floating autocomplete dropdown (`#mentionDropdown`) supporting keyboard navigation (`ArrowUp`, `ArrowDown`, `Enter`, `Tab`, `Escape`) and mouse selection.
+  - Lightweight workspace indexer (`src/context/indexer.ts`) performing windowed code chunking (35 lines, 10-line overlap), symbol extraction for Python and TypeScript/JavaScript, and debounced file change watchers.
+  - Okapi BM25 keyword search indexer (`src/context/bm25.ts`) with code-aware tokenization (handling snake_case and camelCase identifiers), stop-word filtering, smoothed Robertson-Spärck Jones IDF, and path-matching relevance bonus.
+  - Strict dual-tier token budgeting (`src/context/budget.ts`): configurable prompt context budget (`forgeAgent.contextBudgetTokens`, default 6,000 tokens) and MCP tool output budget (~3,500 tokens) with line-level boundary truncation and informative truncation notices.
+  - Overlap merging and deduplication: consolidates adjacent or overlapping chunks from the same file into unified snippets, preserving line ranges and combined reasons.
+  - Registered MCP tool `get_relevant_context(query, limit)` in `src/mcp/tools.ts` returning ranked snippets with one-line human/agent-readable reasons.
+  - Interactive "Context used" card in webview panel displaying token metrics, usage progress bar, clickable file links (`openFile`), reason pills, and expandable snippet previews.
+  - TrueForge Context-Engineering Feature Selection: enabled Deferred Tool Loading (`preload: false`), surfaced visibly in the UI via status pill (`⚡ Deferred Tools Active`) and meta-tool call badges (`⚡ TrueForge Deferred Tool`).
+  - Added comprehensive context test suite `scripts/test-context.ts` (`npm run test:context`) and architectural documentation `docs/context-strategy.md`.
 

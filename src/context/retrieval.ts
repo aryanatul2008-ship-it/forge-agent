@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, ChildProcess } from 'node:child_process';
 import { enforceContextBudget } from './budget';
 
 interface SymbolMatch {
@@ -58,6 +58,19 @@ const IGNORED_EXTENSIONS = new Set([
 
 export class WorkspaceRetrieval {
   private static customWorkspaceRoot: string | null = null;
+  private static activeChildProcesses = new Set<ChildProcess>();
+
+  /**
+   * Kills all currently running child processes launched by runCommand.
+   */
+  public static killRunningCommands(): void {
+    for (const child of WorkspaceRetrieval.activeChildProcesses) {
+      try {
+        child.kill('SIGTERM');
+      } catch {}
+    }
+    WorkspaceRetrieval.activeChildProcesses.clear();
+  }
 
   /**
    * Override workspace root (used by tests or CLI).
@@ -535,16 +548,34 @@ export class WorkspaceRetrieval {
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const cwd = WorkspaceRetrieval.getWorkspaceRoot();
 
+    // Prepare environment: check for virtual environment in workspace and prepend to PATH
+    const env = { ...process.env };
+    const venvCandidates = [
+      path.join(cwd, '.venv', 'Scripts'),
+      path.join(cwd, 'venv', 'Scripts'),
+    ];
+    for (const venvScripts of venvCandidates) {
+      if (fs.existsSync(venvScripts)) {
+        env.PATH = `${venvScripts};${env.PATH || ''}`;
+        env.Path = `${venvScripts};${env.Path || ''}`;
+        break;
+      }
+    }
+
     return new Promise((resolve, reject) => {
       const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
         cwd,
+        env,
         windowsHide: true,
       });
+
+      WorkspaceRetrieval.activeChildProcesses.add(child);
 
       let stdout = '';
       let stderr = '';
 
       const timer = setTimeout(() => {
+        WorkspaceRetrieval.activeChildProcesses.delete(child);
         child.kill('SIGTERM');
         reject(new Error(`Command timed out after ${timeoutMs}ms: "${command}"`));
       }, timeoutMs);
@@ -559,6 +590,7 @@ export class WorkspaceRetrieval {
 
       child.on('close', (code) => {
         clearTimeout(timer);
+        WorkspaceRetrieval.activeChildProcesses.delete(child);
         resolve({
           stdout: enforceContextBudget(stdout, { label: 'stdout' }),
           stderr: enforceContextBudget(stderr, { label: 'stderr' }),
@@ -568,6 +600,7 @@ export class WorkspaceRetrieval {
 
       child.on('error', (err) => {
         clearTimeout(timer);
+        WorkspaceRetrieval.activeChildProcesses.delete(child);
         reject(err);
       });
     });

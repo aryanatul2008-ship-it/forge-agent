@@ -216,15 +216,15 @@ export class TrueForgeClient {
             const rawCalls = (event as any).toolCalls || (event as any).tool_calls;
             if (Array.isArray(rawCalls)) {
               for (const tc of rawCalls) {
-                let name = tc.function?.name ?? tc.toolInfo?.name ?? 'unknown_tool';
-                let parsedArgs = tc.function?.arguments;
+                let name = tc.function?.name ?? tc.toolInfo?.name ?? tc.name ?? 'unknown_tool';
+                let parsedArgs = tc.function?.arguments ?? tc.arguments ?? tc.args;
                 if (typeof parsedArgs === 'string') {
                   try {
                     parsedArgs = JSON.parse(parsedArgs);
                   } catch {}
                 }
-                if (name === 'call_tool' && parsedArgs?.tool_name) {
-                  name = parsedArgs.tool_name;
+                if (name === 'call_tool' && (parsedArgs?.tool_name || parsedArgs?.name)) {
+                  name = parsedArgs.tool_name || parsedArgs.name;
                   parsedArgs = parsedArgs.input ?? parsedArgs.arguments ?? {};
                 }
                 const info: ToolCallInfo = {
@@ -233,7 +233,9 @@ export class TrueForgeClient {
                   arguments: parsedArgs,
                   sourceEventId: event.id,
                 };
-                this.recentToolCalls.set(tc.id, info);
+                if (tc.id) {
+                  this.recentToolCalls.set(tc.id, info);
+                }
                 handlers.onToolCall?.(info);
                 handlers.onStatusUpdate?.('calling_tool', `Agent calling: ${name}`);
               }
@@ -244,31 +246,6 @@ export class TrueForgeClient {
           }
 
           case 'model.message.delta': {
-            const deltaCalls = (event as any).toolCalls || (event as any).tool_calls;
-            if (Array.isArray(deltaCalls)) {
-              for (const tc of deltaCalls) {
-                let name = tc.function?.name ?? tc.toolInfo?.name ?? 'unknown_tool';
-                let parsedArgs = tc.function?.arguments;
-                if (typeof parsedArgs === 'string') {
-                  try {
-                    parsedArgs = JSON.parse(parsedArgs);
-                  } catch {}
-                }
-                if (name === 'call_tool' && parsedArgs?.tool_name) {
-                  name = parsedArgs.tool_name;
-                  parsedArgs = parsedArgs.input ?? parsedArgs.arguments ?? {};
-                }
-                const info: ToolCallInfo = {
-                  id: tc.id,
-                  name,
-                  arguments: parsedArgs,
-                  sourceEventId: event.id,
-                };
-                this.recentToolCalls.set(tc.id, info);
-                handlers.onToolCall?.(info);
-                handlers.onStatusUpdate?.('calling_tool', `Agent calling: ${name}`);
-              }
-            }
             const deltaContent = (event as any).content;
             if (typeof deltaContent === 'string' && deltaContent.length > 0) {
               handlers.onDelta?.(deltaContent);
@@ -291,10 +268,16 @@ export class TrueForgeClient {
             const rawRefs = (event as any).toolCalls || (event as any).tool_calls || [];
             const enriched: ToolCallInfo[] = rawRefs.map((ref: any) => {
               const cached = this.recentToolCalls.get(ref.id);
+              let name = cached?.name ?? ref.name ?? ref.function?.name ?? 'gated_tool';
+              let parsedArgs = cached?.arguments ?? ref.arguments ?? ref.function?.arguments ?? {};
+              if (name === 'call_tool' && (parsedArgs?.tool_name || parsedArgs?.name)) {
+                name = parsedArgs.tool_name || parsedArgs.name;
+                parsedArgs = parsedArgs.input ?? parsedArgs.arguments ?? {};
+              }
               return {
                 id: ref.id,
-                name: cached?.name ?? 'gated_tool',
-                arguments: cached?.arguments ?? {},
+                name,
+                arguments: parsedArgs,
                 sourceEventId: ref.sourceEventId || ref.source_event_id,
               };
             });

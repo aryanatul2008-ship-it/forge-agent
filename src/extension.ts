@@ -5,6 +5,9 @@ import { DiffReviewEngine } from './review/diffReview';
 import { ProposedContentProvider } from './review/virtualDocProvider';
 import { AgentPanelProvider } from './webview/agentPanel';
 import { InlineEditController } from './editor/inlineEdit';
+import { WorkspaceRetrieval } from './context/retrieval';
+import { WorkspaceIndexer } from './context/indexer';
+import { ContextEngine } from './context/engine';
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('[Forge Agent] Activating extension...');
@@ -28,7 +31,7 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // 3. Read Configuration
+  // 3. Read Configuration & Initialize Context Engine
   const config = vscode.workspace.getConfiguration('forgeAgent');
   const trueforgeUrl = config.get<string>('trueforgeUrl', 'http://localhost:8790');
   const mcpPort = config.get<number>('mcpPort', 8795);
@@ -36,6 +39,19 @@ export async function activate(context: vscode.ExtensionContext) {
     'google-gemini/gemini-3-1-flash-lite',
     'google-gemini/gemini-3-5-flash-lite',
   ]);
+  const contextBudget = config.get<number>('contextBudgetTokens', 6000);
+
+  const indexer = new WorkspaceIndexer();
+  const contextEngine = new ContextEngine(indexer, { maxTokens: contextBudget });
+
+  // Index workspace in background
+  indexer.initialize().then(() => {
+    console.log(
+      `[Forge Agent] Workspace indexed: ${indexer.getIndexedFilesCount()} files, ${indexer.getIndexedChunksCount()} chunks, ${indexer.getIndexedSymbolsCount()} symbols`
+    );
+  }).catch((err) => {
+    console.warn('[Forge Agent] Background workspace indexing error:', err);
+  });
 
   // 4. Initialize TrueForge Client
   const tfClient = new TrueForgeClient({
@@ -53,13 +69,15 @@ export async function activate(context: vscode.ExtensionContext) {
           'google-gemini/gemini-3-1-flash-lite',
           'google-gemini/gemini-3-5-flash-lite',
         ]);
+        const newBudget = updatedConfig.get<number>('contextBudgetTokens', 6000);
         tfClient.updateConfig({ baseUrl: newUrl, models: newModels });
+        contextEngine.setBudgetTokens(newBudget);
       }
     })
   );
 
-  // 5. Initialize Local MCP Server
-  const mcpServer = new LocalMcpServer(reviewEngine);
+  // 5. Initialize Local MCP Server with Context Engine
+  const mcpServer = new LocalMcpServer(reviewEngine, contextEngine);
 
   // Start MCP server in background (async, non-blocking)
   mcpServer
@@ -85,9 +103,55 @@ export async function activate(context: vscode.ExtensionContext) {
       console.error('[Forge Agent] Failed to start local MCP server:', err);
     });
 
-  // 6. Connect Webview Events & Diff Review to TrueForge Client
+  // 6. Connect Webview Events, Autocomplete Mentions & Diff Review to TrueForge Client
+  panelProvider.onQueryMentions((query) => {
+    const suggestions = contextEngine.getMentionSuggestions(query);
+    panelProvider.postMessage({ type: 'mentionSuggestions', suggestions });
+  });
+
+  panelProvider.onOpenFile(async (filePath: string, line?: number) => {
+    try {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (workspaceFolders && workspaceFolders.length > 0) {
+        const rootUri = workspaceFolders[0].uri;
+        const fileUri = vscode.Uri.joinPath(rootUri, filePath);
+        const doc = await vscode.workspace.openTextDocument(fileUri);
+        const editor = await vscode.window.showTextDocument(doc);
+        if (line && line > 0) {
+          const pos = new vscode.Position(line - 1, 0);
+          editor.selection = new vscode.Selection(pos, pos);
+          editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+        }
+      }
+    } catch (err: any) {
+      vscode.window.showWarningMessage(`Could not open file ${filePath}: ${err?.message || err}`);
+    }
+  });
+
   panelProvider.onPromptSubmitted(async (userPrompt: string) => {
     try {
+      panelProvider.postMessage({ type: 'status', status: 'running', details: 'Retrieving context...' });
+
+      // Retrieve bounded context via ContextEngine (mentions + BM25 chunks + symbols)
+      const contextRes = await contextEngine.retrieveRelevantContext(userPrompt);
+
+      if (contextRes.snippets.length > 0) {
+        panelProvider.postMessage({
+          type: 'contextUsed',
+          items: contextRes.snippets.map((s) => ({
+            file: s.filePath,
+            range: `Lines ${s.startLine}-${s.endLine}`,
+            reason: s.reason,
+            tokens: s.tokens,
+            snippetPreview: s.content.slice(0, 300),
+            line: s.startLine,
+          })),
+          totalTokens: contextRes.totalTokens,
+          budgetTokens: contextRes.budgetTokens,
+          summary: contextRes.summary,
+        });
+      }
+
       panelProvider.postMessage({ type: 'status', status: 'running', details: 'Connecting to agent...' });
 
       // Ensure session exists
@@ -96,8 +160,12 @@ export async function activate(context: vscode.ExtensionContext) {
         modelName: tfClient.getPrimaryModel(),
       });
 
+      const promptWithContext = contextRes.formattedContext
+        ? `${contextRes.formattedContext}\n\n### User Request:\n${userPrompt}`
+        : userPrompt;
+
       // Stream the turn asynchronously (never blocking the extension host)
-      await tfClient.streamTurn(sessionId, userPrompt, {
+      await tfClient.streamTurn(sessionId, promptWithContext, {
         onTurnCreated: (turnId) => {
           panelProvider.postMessage({ type: 'assistantStart', turnId });
         },
@@ -217,6 +285,7 @@ export async function activate(context: vscode.ExtensionContext) {
     });
 
     try {
+      WorkspaceRetrieval.killRunningCommands();
       await tfClient.cancelTurn();
       reviewEngine.clearAllStagedEdits();
       panelProvider.postMessage({

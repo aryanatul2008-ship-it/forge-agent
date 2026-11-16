@@ -104,6 +104,11 @@
             "google-gemini/gemini-3-5-flash-lite"
           ],
           "description": "Ordered list of model FQNs (primary first, followed by fallbacks)"
+        },
+        "forgeAgent.contextBudgetTokens": {
+          "type": "number",
+          "default": 6000,
+          "description": "Token budget cap for injected workspace context and retrieved snippets"
         }
       }
     }
@@ -116,7 +121,9 @@
     "register-agent": "esbuild scripts/register-agent.ts --bundle --platform=node --outfile=dist/register-agent.js && node dist/register-agent.js",
     "smoke-test": "esbuild scripts/smoke-test.ts --bundle --platform=node --outfile=dist/smoke-test.js && node dist/smoke-test.js",
     "test": "esbuild scripts/test-review.ts --bundle --platform=node --external:vscode --outfile=dist/test-review.js && node dist/test-review.js",
-    "test:task-a": "esbuild scripts/test-task-a.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-a.js && node dist/test-task-a.js"
+    "test:task-a": "esbuild scripts/test-task-a.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-a.js && node dist/test-task-a.js",
+    "test:task-b": "esbuild scripts/test-task-b.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-b.js && node dist/test-task-b.js",
+    "test:context": "esbuild scripts/test-context.ts --bundle --platform=node --external:vscode --outfile=dist/test-context.js && node dist/test-context.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",

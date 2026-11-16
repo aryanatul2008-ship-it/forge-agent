@@ -5,6 +5,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { getEditorTools, executeEditorTool } from './tools';
 import { DiffReviewEngine } from '../review/diffReview';
+import { ContextEngine } from '../context/engine';
 
 export interface McpServerInfo {
   port: number;
@@ -17,11 +18,17 @@ export class LocalMcpServer {
   private token: string;
   private port: number = 0;
   private reviewEngine: DiffReviewEngine;
+  private contextEngine?: ContextEngine;
   private activeSessions = new Map<string, { server: Server; transport: SSEServerTransport }>();
 
-  constructor(reviewEngine: DiffReviewEngine) {
+  constructor(reviewEngine: DiffReviewEngine, contextEngine?: ContextEngine) {
     this.reviewEngine = reviewEngine;
+    this.contextEngine = contextEngine;
     this.token = randomUUID();
+  }
+
+  public setContextEngine(contextEngine: ContextEngine): void {
+    this.contextEngine = contextEngine;
   }
 
   public getToken(): string {
@@ -72,7 +79,8 @@ export class LocalMcpServer {
         toolName,
         args,
         toolCallId,
-        this.reviewEngine
+        this.reviewEngine,
+        this.contextEngine
       );
 
       return {
