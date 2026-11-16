@@ -1339,6 +1339,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           setTurnState(false);
           updateStatus(msg.status, msg.reason ? ('Reason: ' + msg.reason) : 'Turn complete');
           currentAssistantEl = null;
+          if (msg.status === 'cancelled') {
+            activeReviews.forEach(({ cardEl }) => {
+              cardEl.querySelectorAll('button').forEach((b) => {
+                b.disabled = true;
+                b.style.opacity = '0.5';
+                b.style.cursor = 'not-allowed';
+              });
+              const cancelBanner = document.createElement('div');
+              cancelBanner.className = 'notice-banner warning';
+              cancelBanner.textContent = '⚠️ Staged review cancelled: all proposed edits discarded.';
+              cardEl.appendChild(cancelBanner);
+            });
+            activeReviews.clear();
+          }
           break;
         case 'error':
           setTurnState(false);

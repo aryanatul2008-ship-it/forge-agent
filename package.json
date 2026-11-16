@@ -134,7 +134,8 @@
     "test:task-a": "esbuild scripts/test-task-a.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-a.js && node dist/test-task-a.js",
     "test:task-b": "esbuild scripts/test-task-b.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-b.js && node dist/test-task-b.js",
     "test:context": "esbuild scripts/test-context.ts --bundle --platform=node --external:vscode --outfile=dist/test-context.js && node dist/test-context.js",
-    "test:resilience": "esbuild scripts/test-resilience.ts --bundle --platform=node --external:vscode --outfile=dist/test-resilience.js && node dist/test-resilience.js"
+    "test:resilience": "esbuild scripts/test-resilience.ts --bundle --platform=node --external:vscode --outfile=dist/test-resilience.js && node dist/test-resilience.js",
+    "test:audit": "esbuild scripts/test-audit.ts --bundle --platform=node --external:vscode --outfile=dist/test-audit.js && node dist/test-audit.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",

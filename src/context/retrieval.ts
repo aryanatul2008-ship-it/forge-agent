@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { spawn, ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, ChildProcess } from 'node:child_process';
 import { enforceContextBudget } from './budget';
 
 interface SymbolMatch {
@@ -62,14 +62,43 @@ export class WorkspaceRetrieval {
 
   /**
    * Kills all currently running child processes launched by runCommand.
+   * On Windows, uses taskkill /T /F to ensure entire child process trees are terminated.
    */
   public static killRunningCommands(): void {
     for (const child of WorkspaceRetrieval.activeChildProcesses) {
       try {
-        child.kill('SIGTERM');
+        if (child.pid) {
+          if (process.platform === 'win32') {
+            spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+          } else {
+            child.kill('SIGTERM');
+          }
+        }
       } catch {}
     }
     WorkspaceRetrieval.activeChildProcesses.clear();
+  }
+
+  /**
+   * Detects whether a file is binary (via known extensions or null bytes in header).
+   */
+  public static async isBinaryFile(fullPath: string): Promise<boolean> {
+    const ext = path.extname(fullPath).toLowerCase();
+    if (IGNORED_EXTENSIONS.has(ext)) return true;
+    try {
+      const stat = await fs.promises.stat(fullPath);
+      if (stat.isDirectory()) return false;
+      const fd = await fs.promises.open(fullPath, 'r');
+      const buffer = Buffer.alloc(Math.min(1024, stat.size));
+      const { bytesRead } = await fd.read(buffer, 0, buffer.length, 0);
+      await fd.close();
+      for (let i = 0; i < bytesRead; i++) {
+        if (buffer[i] === 0) return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
   }
 
   /**
@@ -240,6 +269,17 @@ export class WorkspaceRetrieval {
       throw new Error(`File not found: "${relativePath}"`);
     }
 
+    const stat = await fs.promises.stat(fullPath);
+    if (stat.isDirectory()) {
+      throw new Error(`Path is a directory, not a file: "${relativePath}"`);
+    }
+
+    // Binary file detection
+    const isBinary = await WorkspaceRetrieval.isBinaryFile(fullPath);
+    if (isBinary) {
+      return `[Binary file cannot be displayed: "${WorkspaceRetrieval.toRelativePath(fullPath, root)}" (${(stat.size / 1024).toFixed(1)} KB)]`;
+    }
+
     let content: string;
     // Check if open in VS Code document buffer first
     try {
@@ -264,7 +304,9 @@ export class WorkspaceRetrieval {
     }
 
     const s = Math.max(1, startLine ?? 1);
-    const e = Math.min(totalLines, endLine ?? totalLines);
+    // For large files (> 3,000 lines), if no endLine is requested, default to a sensible window
+    const defaultMaxLines = (!startLine && !endLine && totalLines > 3000) ? 300 : totalLines;
+    const e = Math.min(totalLines, endLine ?? defaultMaxLines);
 
     if (s > totalLines) {
       return enforceContextBudget(
@@ -279,6 +321,10 @@ export class WorkspaceRetrieval {
     for (let i = s - 1; i < e; i++) {
       const lineNum = String(i + 1).padStart(4, ' ');
       formattedLines.push(`${lineNum} | ${allLines[i]}`);
+    }
+
+    if (!endLine && defaultMaxLines < totalLines) {
+      formattedLines.push(`\n[Showing first ${defaultMaxLines} lines of ${totalLines}. Use start_line and end_line parameters to read subsequent sections.]`);
     }
 
     return enforceContextBudget(formattedLines.join('\n'), { label: relativePath });
@@ -324,6 +370,11 @@ export class WorkspaceRetrieval {
     for (const filePath of allFiles) {
       const relPath = WorkspaceRetrieval.toRelativePath(filePath, root);
       if (filePattern && !relPath.toLowerCase().includes(filePattern)) {
+        continue;
+      }
+
+      // Skip binary files
+      if (await WorkspaceRetrieval.isBinaryFile(filePath)) {
         continue;
       }
 

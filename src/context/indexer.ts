@@ -152,15 +152,23 @@ export class WorkspaceIndexer {
     // Remove old symbols for this file
     this.symbols = this.symbols.filter((s) => s.filePath !== normalized);
 
+    // Skip binary files or ignored extensions
+    const ext = path.extname(normalized).toLowerCase();
+    if (IGNORED_EXTENSIONS.has(ext)) return;
+
     let content = fileContent;
     if (content === undefined) {
       if (!fs.existsSync(fullPath)) return;
       try {
+        const stat = await fs.promises.stat(fullPath);
+        if (stat.size > 500 * 1024) return; // Skip indexing files larger than 500KB
         content = await fs.promises.readFile(fullPath, 'utf-8');
       } catch {
         return;
       }
     }
+
+    if (content.includes('\0')) return; // Skip binary content
 
     if (!this.fileList.includes(normalized)) {
       this.fileList.push(normalized);

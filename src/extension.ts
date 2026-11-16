@@ -322,12 +322,27 @@ export async function activate(context: vscode.ExtensionContext) {
       WorkspaceRetrieval.killRunningCommands();
       await tfClient.cancelTurn();
       reviewEngine.clearAllStagedEdits();
+
+      // Close any open diff editors displaying proposed edits
+      try {
+        for (const group of vscode.window.tabGroups.all) {
+          for (const tab of group.tabs) {
+            if (tab.input && typeof tab.input === 'object' && 'modified' in tab.input) {
+              const modUri = (tab.input as any).modified;
+              if (modUri?.scheme === ProposedContentProvider.scheme) {
+                vscode.window.tabGroups.close(tab);
+              }
+            }
+          }
+        }
+      } catch {}
+
       panelProvider.postMessage({
         type: 'turnDone',
         status: 'cancelled',
         reason: 'client-cancelled',
       });
-      vscode.window.showInformationMessage('Forge Agent turn cancelled.');
+      vscode.window.showInformationMessage('Forge Agent turn cancelled. All staged edits discarded.');
     } catch (err: any) {
       console.warn('[Forge Agent] Error cancelling turn:', err);
     }

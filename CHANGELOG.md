@@ -95,4 +95,16 @@ All notable changes to this project will be documented in this file.
   - Added user settings `forgeAgent.models`, `forgeAgent.primaryModel`, and `forgeAgent.fallbackModel` in `package.json` to configure model fallback order.
   - Updated both panel chat (`src/extension.ts`) and inline edit (`src/editor/inlineEdit.ts`) to execute turns with full resilience, ensuring the editor remains responsive and `reviewEngine.clearAllStagedEdits()` is triggered on failure so no disk files are modified.
   - Created comprehensive resilience test suite `scripts/test-resilience.ts` (`npm run test:resilience`): verified unreachable endpoint backoff retries, automatic model fallback on TrueForge, terminal error formatting without stack traces, and verified that Task A with a bad key terminates safely leaving `git status` in Flask 100% clean with zero modified files.
+- Completed Comprehensive System Audit, Edge Case Hardening, and Testing Documentation:
+  - Enhanced cancellation handling across all stages:
+    - Mid-streaming: halts token generation immediately and emits `turn.done` with `status: "cancelled"`.
+    - Pending review: discards in-memory staged edits (`clearAllStagedEdits`), closes open `forge-proposed:` diff editor tabs, and deactivates webview review cards with a warning banner.
+    - Active commands: terminates running process trees via `taskkill /pid ... /T /F` on Windows, preventing hung child processes.
+  - Hardened large and binary file handling across `read_file`, `search_workspace`, and `WorkspaceIndexer`:
+    - Added `isBinaryFile` checking known binary extensions and header null-byte detection (`\0`), returning `[Binary file cannot be displayed]` without dumping raw binary bytes into context.
+    - Added large-file windowing (defaulting to 300-line windows for files > 3,000 lines when no range is requested) and enforced context budgeting at ~3,500 tokens.
+  - Verified undo history stack after accept: confirmed single and sequential LIFO undos restore exact original file contents.
+  - Audited Webview communication: confirmed all message passing is strictly asynchronous and non-blocking for the Extension Host thread.
+  - Created automated audit test suite `scripts/test-audit.ts` (`npm run test:audit`) passing 100% across all cancellation, undo, and edge case scenarios.
+  - Authored comprehensive manual testing guide `TESTING.md` covering Task A, Task B, Task C, cancellation across all stages, and edge cases.
 
