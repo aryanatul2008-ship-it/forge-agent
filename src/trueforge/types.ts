@@ -30,6 +30,15 @@ export interface StreamEventHandlers {
   onToolResponse?: (response: ToolResponseInfo) => void;
   onApprovalRequired?: (toolCalls: ToolCallInfo[]) => void;
   onStatusUpdate?: (status: string, details?: string) => void;
+  onNotice?: (message: string, level?: 'info' | 'warning' | 'error') => void;
   onDone?: (status: string, reason?: string, metrics?: any) => void;
   onError?: (error: Error) => void;
+}
+
+export interface ResilientTurnResult {
+  turnId: string;
+  status: 'done' | 'cancelled' | 'error';
+  modelUsed: string;
+  attempts: number;
+  reason?: string;
 }

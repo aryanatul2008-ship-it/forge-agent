@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { TrueForgeClient } from '../trueforge/client';
+import { formatHumanReadableError } from '../trueforge/resilience';
 import { DiffReviewEngine } from '../review/diffReview';
 import { ProposedContentProvider } from '../review/virtualDocProvider';
 
@@ -89,11 +90,6 @@ export class InlineEditController {
     });
 
     try {
-      const sessionId = await this.tfClient.getOrCreateSession({
-        mcpServerName: 'vscode-ide',
-        modelName: this.tfClient.getPrimaryModel(),
-      });
-
       const prompt = [
         `You are performing an inline edit in VS Code on file "${relativePath}".`,
         `Lines ${startLine}-${endLine} are selected.`,
@@ -116,30 +112,48 @@ export class InlineEditController {
         'Only modify what was requested by the user instruction.',
       ].join('\n');
 
-      await this.tfClient.streamTurn(sessionId, prompt, {
-        onDelta: (content) => {
-          tokensReceived += content.length;
-          this.statusBarItem.text = `$(sync~spin) Forge Agent: Streaming edit (~${Math.round(tokensReceived / 4)} tokens)...`;
-        },
-        onApprovalRequired: async (calls) => {
-          for (const call of calls) {
-            if (call.name === 'propose_edit') {
-              stagedToolCallId = call.id;
-              const filePath = call.arguments?.file || call.arguments?.path || relativePath;
-              const explanation = call.arguments?.explanation || call.arguments?.description || instruction;
-              const newContent = call.arguments?.new_content || call.arguments?.newContent || call.arguments?.content;
-              const hunks = call.arguments?.edits || call.arguments?.hunks;
+      const resilientResult = await this.tfClient.streamTurnWithResilience(
+        prompt,
+        {
+          onDelta: (content) => {
+            tokensReceived += content.length;
+            this.statusBarItem.text = `$(sync~spin) Forge Agent: Streaming edit (~${Math.round(tokensReceived / 4)} tokens)...`;
+          },
+          onApprovalRequired: async (calls) => {
+            for (const call of calls) {
+              if (call.name === 'propose_edit') {
+                stagedToolCallId = call.id;
+                const filePath = call.arguments?.file || call.arguments?.path || relativePath;
+                const explanation = call.arguments?.explanation || call.arguments?.description || instruction;
+                const newContent = call.arguments?.new_content || call.arguments?.newContent || call.arguments?.content;
+                const hunks = call.arguments?.edits || call.arguments?.hunks;
 
-              await this.reviewEngine.stageEdit(call.id, filePath, explanation, { newContent, hunks });
+                await this.reviewEngine.stageEdit(call.id, filePath, explanation, { newContent, hunks });
+              }
             }
-          }
+          },
+          onNotice: (message) => {
+            this.statusBarItem.text = `$(sync~spin) Forge Agent: ${message.slice(0, 40)}...`;
+          },
+          onStatusUpdate: (status, details) => {
+            if (status === 'calling_tool') {
+              this.statusBarItem.text = '$(tools) Forge Agent: Preparing proposed edit...';
+            } else if (status === 'retrying' || status === 'fallback') {
+              this.statusBarItem.text = `$(sync~spin) Forge Agent: ${details || status}...`;
+            }
+          },
         },
-        onStatusUpdate: (status, details) => {
-          if (status === 'calling_tool') {
-            this.statusBarItem.text = '$(tools) Forge Agent: Preparing proposed edit...';
-          }
-        },
-      });
+        {
+          mcpServerName: 'vscode-ide',
+        }
+      );
+
+      if (resilientResult.status === 'error') {
+        this.reviewEngine.clearAllStagedEdits();
+        this.statusBarItem.text = '$(error) Forge Agent: Error';
+        vscode.window.showErrorMessage(`Inline edit failed: ${resilientResult.reason || 'TrueForge turn error'}`);
+        return;
+      }
 
       this.statusBarItem.text = '$(check) Forge Agent: Edit Ready';
       setTimeout(() => this.statusBarItem.hide(), 3000);
@@ -157,9 +171,14 @@ export class InlineEditController {
         }
       }
     } catch (err: any) {
+      this.reviewEngine.clearAllStagedEdits();
       if (!token.isCancellationRequested) {
         this.statusBarItem.text = '$(error) Forge Agent: Error';
-        vscode.window.showErrorMessage(`Inline edit failed: ${err?.message || err}`);
+        const cleanMsg = formatHumanReadableError(err, {
+          model: this.tfClient.getPrimaryModel(),
+          baseUrl: this.tfClient.getBaseUrl(),
+        });
+        vscode.window.showErrorMessage(`Inline edit failed: ${cleanMsg}`);
       }
     } finally {
       this.activeCancellationTokenSource?.dispose();

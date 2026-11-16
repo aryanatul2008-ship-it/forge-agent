@@ -22,6 +22,7 @@ export interface ContextUsedItem {
 
 export type ExtensionToWebviewMessage =
   | { type: 'status'; status: string; details?: string }
+  | { type: 'notice'; message: string; level?: 'info' | 'warning' | 'error' }
   | { type: 'userMessage'; text: string }
   | { type: 'assistantStart'; turnId: string }
   | { type: 'token'; content: string }

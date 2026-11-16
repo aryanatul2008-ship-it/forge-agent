@@ -103,7 +103,17 @@
             "google-gemini/gemini-3-1-flash-lite",
             "google-gemini/gemini-3-5-flash-lite"
           ],
-          "description": "Ordered list of model FQNs (primary first, followed by fallbacks)"
+          "description": "Ordered list of model FQNs: primary model is listed first, followed by fallback models automatically used if primary fails."
+        },
+        "forgeAgent.primaryModel": {
+          "type": "string",
+          "default": "google-gemini/gemini-3-1-flash-lite",
+          "description": "Primary model FQN configured in TrueForge (e.g. 'google-gemini/gemini-3-1-flash-lite')"
+        },
+        "forgeAgent.fallbackModel": {
+          "type": "string",
+          "default": "google-gemini/gemini-3-5-flash-lite",
+          "description": "Fallback model FQN automatically used when the primary model fails or times out (e.g. 'google-gemini/gemini-3-5-flash-lite')"
         },
         "forgeAgent.contextBudgetTokens": {
           "type": "number",
@@ -123,7 +133,8 @@
     "test": "esbuild scripts/test-review.ts --bundle --platform=node --external:vscode --outfile=dist/test-review.js && node dist/test-review.js",
     "test:task-a": "esbuild scripts/test-task-a.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-a.js && node dist/test-task-a.js",
     "test:task-b": "esbuild scripts/test-task-b.ts --bundle --platform=node --external:vscode --outfile=dist/test-task-b.js && node dist/test-task-b.js",
-    "test:context": "esbuild scripts/test-context.ts --bundle --platform=node --external:vscode --outfile=dist/test-context.js && node dist/test-context.js"
+    "test:context": "esbuild scripts/test-context.ts --bundle --platform=node --external:vscode --outfile=dist/test-context.js && node dist/test-context.js",
+    "test:resilience": "esbuild scripts/test-resilience.ts --bundle --platform=node --external:vscode --outfile=dist/test-resilience.js && node dist/test-resilience.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",

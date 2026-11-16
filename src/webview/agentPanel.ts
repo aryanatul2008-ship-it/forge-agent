@@ -585,7 +585,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       display: block;
     }
 
-    /* Error Banner */
+    /* Error & Notice Banners */
     .error-banner {
       background-color: var(--vscode-inputValidation-errorBackground, #5a1d1d);
       border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
@@ -593,6 +593,34 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       padding: 8px 12px;
       border-radius: 4px;
       font-size: 12px;
+    }
+    .notice-banner {
+      margin: 6px 0;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      line-height: 1.4;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .notice-banner.warning {
+      background-color: rgba(255, 193, 7, 0.12);
+      border: 1px solid rgba(255, 193, 7, 0.35);
+      border-left: 4px solid #ffc107;
+      color: #ffd166;
+    }
+    .notice-banner.info {
+      background-color: rgba(13, 110, 253, 0.12);
+      border: 1px solid rgba(13, 110, 253, 0.35);
+      border-left: 4px solid #0d6efd;
+      color: #70b0ff;
+    }
+    .notice-banner.error {
+      background-color: rgba(220, 53, 69, 0.15);
+      border: 1px solid rgba(220, 53, 69, 0.4);
+      border-left: 4px solid #dc3545;
+      color: #f87171;
     }
 
     /* Input & Autocomplete Area */
@@ -1081,6 +1109,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       scrollToBottom();
     }
 
+    function appendNotice(msg, level) {
+      removeEmptyState();
+      const banner = document.createElement('div');
+      const safeLevel = (level === 'info' || level === 'error') ? level : 'warning';
+      banner.className = 'notice-banner ' + safeLevel;
+      const icon = safeLevel === 'info' ? 'ℹ️' : safeLevel === 'error' ? '❌' : '⚠️';
+      banner.textContent = icon + ' ' + msg;
+      messagesContainer.appendChild(banner);
+      scrollToBottom();
+    }
+
     function updateStatus(status, details) {
       statusBadge.textContent = status;
       statusBadge.className = 'status-badge ' + status;
@@ -1265,6 +1304,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           break;
         case 'contextUsed':
           appendContextUsed(msg);
+          break;
+        case 'notice':
+          appendNotice(msg.message, msg.level);
           break;
         case 'mentionSuggestions':
           renderMentionSuggestions(msg.suggestions);

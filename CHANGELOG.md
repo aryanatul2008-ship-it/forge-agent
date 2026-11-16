@@ -84,4 +84,15 @@ All notable changes to this project will be documented in this file.
   - Interactive "Context used" card in webview panel displaying token metrics, usage progress bar, clickable file links (`openFile`), reason pills, and expandable snippet previews.
   - TrueForge Context-Engineering Feature Selection: enabled Deferred Tool Loading (`preload: false`), surfaced visibly in the UI via status pill (`⚡ Deferred Tools Active`) and meta-tool call badges (`⚡ TrueForge Deferred Tool`).
   - Added comprehensive context test suite `scripts/test-context.ts` (`npm run test:context`) and architectural documentation `docs/context-strategy.md`.
+- Implemented Resilience, Exponential Backoff, Automatic Model Fallback, and Safe Error Recovery:
+  - Created `src/trueforge/resilience.ts` providing exponential backoff calculation (`calculateBackoffDelay`), sleep with `AbortSignal` cancellation, and human-readable error formatting (`formatHumanReadableError`).
+  - Guaranteed NO stack traces, internal paths, or unparsed JSON blobs are leaked to the user across unreachable endpoints, invalid keys, timeouts, rate limits, or unknown models.
+  - Implemented `streamTurnWithResilience` in `TrueForgeClient` (`src/trueforge/client.ts`):
+    - Retries transient turn failures with exponential backoff (max 2 retries per model).
+    - Automatically switches to fallback models configured in TrueForge when primary model fails, resetting session state cleanly.
+    - Emits visible notices to the Webview panel on retries (`Attempt failed. Retrying...`) and fallback switching (`Switching to fallback model...`).
+  - Added Webview Notice UI in `src/webview/agentPanel.ts` (`notice-banner` styling for warning, info, and error notifications) and wired `notice` event stream.
+  - Added user settings `forgeAgent.models`, `forgeAgent.primaryModel`, and `forgeAgent.fallbackModel` in `package.json` to configure model fallback order.
+  - Updated both panel chat (`src/extension.ts`) and inline edit (`src/editor/inlineEdit.ts`) to execute turns with full resilience, ensuring the editor remains responsive and `reviewEngine.clearAllStagedEdits()` is triggered on failure so no disk files are modified.
+  - Created comprehensive resilience test suite `scripts/test-resilience.ts` (`npm run test:resilience`): verified unreachable endpoint backoff retries, automatic model fallback on TrueForge, terminal error formatting without stack traces, and verified that Task A with a bad key terminates safely leaving `git status` in Flask 100% clean with zero modified files.
 

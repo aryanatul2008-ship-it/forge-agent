@@ -7,7 +7,13 @@ import {
   StreamEventHandlers,
   ToolCallInfo,
   ToolResponseInfo,
+  ResilientTurnResult,
 } from './types';
+import {
+  sleep,
+  calculateBackoffDelay,
+  formatHumanReadableError,
+} from './resilience';
 
 export class TrueForgeClient {
   private client: TrueForge;
@@ -15,6 +21,7 @@ export class TrueForgeClient {
   private currentSessionId: string | null = null;
   private currentTurnId: string | null = null;
   private activeAbortController: AbortController | null = null;
+  private resilientAbortController: AbortController | null = null;
   private recentToolCalls = new Map<string, ToolCallInfo>();
 
   constructor(config: TrueForgeConfig) {
@@ -328,6 +335,197 @@ export class TrueForgeClient {
   }
 
   /**
+   * Executes a turn with full resilience:
+   * (1) Retries transient failures with exponential backoff (max 2 retries per model).
+   * (2) Automatically falls back to secondary models if primary model fails, with visible notices.
+   * (3) On permanent failure, produces clean human-readable error descriptions (never stack traces).
+   */
+  public async streamTurnWithResilience(
+    userPrompt: string,
+    handlers: StreamEventHandlers,
+    options?: {
+      models?: string[];
+      mcpServerName?: string;
+      systemPrompt?: string;
+      requireApprovalForTools?: string[];
+      maxRetriesPerModel?: number;
+      initialBackoffMs?: number;
+      maxBackoffMs?: number;
+    }
+  ): Promise<ResilientTurnResult> {
+    this.resilientAbortController = new AbortController();
+    const abortSignal = this.resilientAbortController.signal;
+
+    const candidateModels =
+      options?.models && options.models.length > 0
+        ? options.models
+        : this.getModels().length > 0
+        ? this.getModels()
+        : [this.getPrimaryModel()];
+
+    const maxRetries = options?.maxRetriesPerModel ?? 2;
+    const initialBackoffMs = options?.initialBackoffMs ?? 1000;
+    const maxBackoffMs = options?.maxBackoffMs ?? 8000;
+
+    let overallAttempts = 0;
+    let lastError: any = null;
+
+    try {
+      for (let modelIdx = 0; modelIdx < candidateModels.length; modelIdx++) {
+        const currentModel = candidateModels[modelIdx];
+        const isFallback = modelIdx > 0;
+
+        if (abortSignal.aborted) {
+          handlers.onDone?.('cancelled', 'client-cancelled');
+          return {
+            turnId: '',
+            status: 'cancelled',
+            modelUsed: currentModel,
+            attempts: overallAttempts,
+            reason: 'client-cancelled',
+          };
+        }
+
+        if (isFallback) {
+          const priorModel = candidateModels[modelIdx - 1];
+          const noticeMsg = `Switching to fallback model "${currentModel}" after failures with prior model ("${priorModel}").`;
+          handlers.onNotice?.(noticeMsg, 'warning');
+          handlers.onStatusUpdate?.('fallback', `Switching to fallback model: ${currentModel}...`);
+        }
+
+        for (let retry = 0; retry <= maxRetries; retry++) {
+          if (abortSignal.aborted) {
+            handlers.onDone?.('cancelled', 'client-cancelled');
+            return {
+              turnId: '',
+              status: 'cancelled',
+              modelUsed: currentModel,
+              attempts: overallAttempts,
+              reason: 'client-cancelled',
+            };
+          }
+
+          overallAttempts++;
+          const isRetry = retry > 0;
+
+          if (isRetry) {
+            const delay = calculateBackoffDelay(retry, {
+              maxRetriesPerModel: maxRetries,
+              initialBackoffMs,
+              maxBackoffMs,
+              backoffMultiplier: 2,
+            });
+            const retryNotice = `Attempt ${retry} failed on model "${currentModel}". Retrying with exponential backoff in ${Math.round(delay / 1000)}s (attempt ${retry + 1} of ${1 + maxRetries})...`;
+            handlers.onNotice?.(retryNotice, 'warning');
+            handlers.onStatusUpdate?.('retrying', `Retrying on ${currentModel} (${Math.round(delay / 1000)}s backoff)...`);
+
+            try {
+              await sleep(delay, abortSignal);
+            } catch {
+              handlers.onDone?.('cancelled', 'client-cancelled');
+              return {
+                turnId: '',
+                status: 'cancelled',
+                modelUsed: currentModel,
+                attempts: overallAttempts,
+                reason: 'client-cancelled',
+              };
+            }
+          }
+
+          try {
+            // Fresh session for this model if fallback, or if previous attempt failed
+            this.resetSession();
+            const sessionId = await this.createSession({
+              modelName: currentModel,
+              mcpServerName: options?.mcpServerName,
+              systemPrompt: options?.systemPrompt,
+              requireApprovalForTools: options?.requireApprovalForTools,
+            });
+
+            let attemptStatus = 'running';
+            let attemptReason: string | undefined;
+            let attemptMetrics: any;
+
+            // Intercept onDone so we don't prematurely emit terminal 'error' to UI if retries/fallbacks remain
+            const wrappedHandlers: StreamEventHandlers = {
+              ...handlers,
+              onDone: (status, reason, metrics) => {
+                attemptStatus = status;
+                attemptReason = reason;
+                attemptMetrics = metrics;
+              },
+            };
+
+            const turnResult = await this.streamTurn(sessionId, userPrompt, wrappedHandlers);
+
+            if (turnResult.status === 'done' || attemptStatus === 'done') {
+              if (isFallback || isRetry) {
+                handlers.onNotice?.(`Turn completed successfully using model "${currentModel}".`, 'info');
+              }
+              handlers.onDone?.('done', attemptReason, attemptMetrics);
+              return {
+                turnId: turnResult.turnId,
+                status: 'done',
+                modelUsed: currentModel,
+                attempts: overallAttempts,
+                reason: attemptReason,
+              };
+            }
+
+            if (turnResult.status === 'cancelled' || attemptStatus === 'cancelled') {
+              handlers.onDone?.('cancelled', 'client-cancelled');
+              return {
+                turnId: turnResult.turnId,
+                status: 'cancelled',
+                modelUsed: currentModel,
+                attempts: overallAttempts,
+                reason: 'client-cancelled',
+              };
+            }
+
+            // If turn finished with status === 'error'
+            lastError = new Error(attemptReason || turnResult.reason || `Turn failed on model ${currentModel}`);
+          } catch (err: any) {
+            if (err.name === 'AbortError' || abortSignal.aborted) {
+              handlers.onDone?.('cancelled', 'client-cancelled');
+              return {
+                turnId: '',
+                status: 'cancelled',
+                modelUsed: currentModel,
+                attempts: overallAttempts,
+                reason: 'client-cancelled',
+              };
+            }
+            lastError = err;
+          }
+        }
+      }
+
+      // All candidate models and retries have been exhausted
+      const finalModel = candidateModels[candidateModels.length - 1];
+      const cleanError = formatHumanReadableError(lastError, {
+        model: finalModel,
+        baseUrl: this.getBaseUrl(),
+        attempts: overallAttempts,
+      });
+
+      handlers.onError?.(new Error(cleanError));
+      handlers.onStatusUpdate?.('error', cleanError);
+
+      return {
+        turnId: '',
+        status: 'error',
+        modelUsed: finalModel,
+        attempts: overallAttempts,
+        reason: cleanError,
+      };
+    } finally {
+      this.resilientAbortController = null;
+    }
+  }
+
+  /**
    * Approves or denies a gated tool execution.
    */
   public async sendToolApproval(
@@ -362,6 +560,9 @@ export class TrueForgeClient {
    */
   public async cancelTurn(sessionId?: string): Promise<void> {
     const targetSessionId = sessionId ?? this.currentSessionId;
+    if (this.resilientAbortController) {
+      this.resilientAbortController.abort();
+    }
     if (this.activeAbortController) {
       this.activeAbortController.abort();
     }

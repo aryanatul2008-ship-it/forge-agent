@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { TrueForgeClient } from './trueforge/client';
+import { formatHumanReadableError } from './trueforge/resilience';
 import { LocalMcpServer } from './mcp/server';
 import { DiffReviewEngine } from './review/diffReview';
 import { ProposedContentProvider } from './review/virtualDocProvider';
@@ -8,6 +9,32 @@ import { InlineEditController } from './editor/inlineEdit';
 import { WorkspaceRetrieval } from './context/retrieval';
 import { WorkspaceIndexer } from './context/indexer';
 import { ContextEngine } from './context/engine';
+
+function getEffectiveModels(config: vscode.WorkspaceConfiguration): string[] {
+  const models = config.get<string[]>('models', []);
+  const primary = config.get<string>('primaryModel');
+  const fallback = config.get<string>('fallbackModel');
+
+  const result: string[] = [];
+  if (primary && primary.trim()) {
+    result.push(primary.trim());
+  }
+  if (models && models.length > 0) {
+    for (const m of models) {
+      if (m && m.trim() && !result.includes(m.trim())) {
+        result.push(m.trim());
+      }
+    }
+  }
+  if (fallback && fallback.trim() && !result.includes(fallback.trim())) {
+    result.push(fallback.trim());
+  }
+
+  if (result.length === 0) {
+    result.push('google-gemini/gemini-3-1-flash-lite', 'google-gemini/gemini-3-5-flash-lite');
+  }
+  return result;
+}
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('[Forge Agent] Activating extension...');
@@ -35,10 +62,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('forgeAgent');
   const trueforgeUrl = config.get<string>('trueforgeUrl', 'http://localhost:8790');
   const mcpPort = config.get<number>('mcpPort', 8795);
-  const models = config.get<string[]>('models', [
-    'google-gemini/gemini-3-1-flash-lite',
-    'google-gemini/gemini-3-5-flash-lite',
-  ]);
+  const models = getEffectiveModels(config);
   const contextBudget = config.get<number>('contextBudgetTokens', 6000);
 
   const indexer = new WorkspaceIndexer();
@@ -65,10 +89,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('forgeAgent')) {
         const updatedConfig = vscode.workspace.getConfiguration('forgeAgent');
         const newUrl = updatedConfig.get<string>('trueforgeUrl', 'http://localhost:8790');
-        const newModels = updatedConfig.get<string[]>('models', [
-          'google-gemini/gemini-3-1-flash-lite',
-          'google-gemini/gemini-3-5-flash-lite',
-        ]);
+        const newModels = getEffectiveModels(updatedConfig);
         const newBudget = updatedConfig.get<number>('contextBudgetTokens', 6000);
         tfClient.updateConfig({ baseUrl: newUrl, models: newModels });
         contextEngine.setBudgetTokens(newBudget);
@@ -154,87 +175,100 @@ export async function activate(context: vscode.ExtensionContext) {
 
       panelProvider.postMessage({ type: 'status', status: 'running', details: 'Connecting to agent...' });
 
-      // Ensure session exists
-      const sessionId = await tfClient.getOrCreateSession({
-        mcpServerName: 'vscode-ide',
-        modelName: tfClient.getPrimaryModel(),
-      });
-
       const promptWithContext = contextRes.formattedContext
         ? `${contextRes.formattedContext}\n\n### User Request:\n${userPrompt}`
         : userPrompt;
 
-      // Stream the turn asynchronously (never blocking the extension host)
-      await tfClient.streamTurn(sessionId, promptWithContext, {
-        onTurnCreated: (turnId) => {
-          panelProvider.postMessage({ type: 'assistantStart', turnId });
-        },
-        onDelta: (content) => {
-          panelProvider.postMessage({ type: 'token', content });
-        },
-        onToolCall: (call) => {
-          panelProvider.postMessage({
-            type: 'toolCall',
-            id: call.id,
-            name: call.name,
-            arguments: call.arguments,
-          });
-        },
-        onToolResponse: (resp) => {
-          panelProvider.postMessage({
-            type: 'toolResponse',
-            toolCallId: resp.toolCallId,
-            content: resp.content,
-          });
-        },
-        onApprovalRequired: async (calls) => {
-          for (const call of calls) {
-            if (call.name === 'propose_edit') {
-              const filePath = call.arguments?.file || call.arguments?.path || call.arguments?.file_path;
-              const explanation = call.arguments?.explanation || call.arguments?.description || 'Proposed code modifications';
-              const newContent = call.arguments?.new_content || call.arguments?.newContent || call.arguments?.content;
-              const hunks = call.arguments?.edits || call.arguments?.hunks;
+      // Stream the turn with full resilience (exponential backoff, fallback models, human errors)
+      const turnResult = await tfClient.streamTurnWithResilience(
+        promptWithContext,
+        {
+          onTurnCreated: (turnId) => {
+            panelProvider.postMessage({ type: 'assistantStart', turnId });
+          },
+          onDelta: (content) => {
+            panelProvider.postMessage({ type: 'token', content });
+          },
+          onToolCall: (call) => {
+            panelProvider.postMessage({
+              type: 'toolCall',
+              id: call.id,
+              name: call.name,
+              arguments: call.arguments,
+            });
+          },
+          onToolResponse: (resp) => {
+            panelProvider.postMessage({
+              type: 'toolResponse',
+              toolCallId: resp.toolCallId,
+              content: resp.content,
+            });
+          },
+          onApprovalRequired: async (calls) => {
+            for (const call of calls) {
+              if (call.name === 'propose_edit') {
+                const filePath = call.arguments?.file || call.arguments?.path || call.arguments?.file_path;
+                const explanation = call.arguments?.explanation || call.arguments?.description || 'Proposed code modifications';
+                const newContent = call.arguments?.new_content || call.arguments?.newContent || call.arguments?.content;
+                const hunks = call.arguments?.edits || call.arguments?.hunks;
 
-              let staged: any;
-              if (filePath) {
-                try {
-                  staged = await reviewEngine.stageEdit(call.id, filePath, explanation, { newContent, hunks });
-                } catch (stageErr: any) {
-                  console.warn('[Forge Agent] Error staging proposed edit:', stageErr);
+                let staged: any;
+                if (filePath) {
+                  try {
+                    staged = await reviewEngine.stageEdit(call.id, filePath, explanation, { newContent, hunks });
+                  } catch (stageErr: any) {
+                    console.warn('[Forge Agent] Error staging proposed edit:', stageErr);
+                  }
                 }
-              }
 
-              panelProvider.postMessage({
-                type: 'toolApprovalRequired',
-                toolCallId: call.id,
-                name: call.name,
-                arguments: call.arguments,
-                edit: staged,
-              });
-            } else {
-              panelProvider.postMessage({
-                type: 'toolApprovalRequired',
-                toolCallId: call.id,
-                name: call.name,
-                arguments: call.arguments,
-              });
+                panelProvider.postMessage({
+                  type: 'toolApprovalRequired',
+                  toolCallId: call.id,
+                  name: call.name,
+                  arguments: call.arguments,
+                  edit: staged,
+                });
+              } else {
+                panelProvider.postMessage({
+                  type: 'toolApprovalRequired',
+                  toolCallId: call.id,
+                  name: call.name,
+                  arguments: call.arguments,
+                });
+              }
             }
-          }
+          },
+          onNotice: (message, level) => {
+            panelProvider.postMessage({ type: 'notice', message, level });
+          },
+          onStatusUpdate: (status, details) => {
+            panelProvider.postMessage({ type: 'status', status, details });
+          },
+          onDone: (status, reason, metrics) => {
+            panelProvider.postMessage({ type: 'turnDone', status, reason, metrics });
+          },
+          onError: (err) => {
+            panelProvider.postMessage({ type: 'error', message: err.message });
+          },
         },
-        onStatusUpdate: (status, details) => {
-          panelProvider.postMessage({ type: 'status', status, details });
-        },
-        onDone: (status, reason, metrics) => {
-          panelProvider.postMessage({ type: 'turnDone', status, reason, metrics });
-        },
-        onError: (err) => {
-          panelProvider.postMessage({ type: 'error', message: err.message });
-        },
-      });
+        {
+          models: tfClient.getModels(),
+          mcpServerName: 'vscode-ide',
+        }
+      );
+
+      if (turnResult.status === 'error') {
+        reviewEngine.clearAllStagedEdits();
+      }
     } catch (err: any) {
+      reviewEngine.clearAllStagedEdits();
+      const humanMsg = formatHumanReadableError(err, {
+        model: tfClient.getPrimaryModel(),
+        baseUrl: tfClient.getBaseUrl(),
+      });
       panelProvider.postMessage({
         type: 'error',
-        message: err?.message || 'Failed to execute turn in TrueForge',
+        message: humanMsg,
       });
     }
   });
